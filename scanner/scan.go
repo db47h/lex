@@ -85,45 +85,49 @@ func (s *Scanner) Close() {
 
 // emit emits a single token. The i argument must be either a token.Token or an error.
 //
-func (s *Scanner) emit(i interface{}) scanState {
-	var rv scanState
-	var tok Token
-	switch t := i.(type) {
-	case token.Token:
-		tok = Token{
-			Token: t,
-			Pos:   s.s,
-			Raw:   s.b[s.s.Offset:s.n.Offset],
-		}
-		rv = scanAny
-	case error:
-		if t == io.EOF {
-			tok = Token{
-				Token: token.EOF,
-				Pos:   s.s,
-				Raw:   nil,
-			}
-			rv = nil
-		} else {
-			tok = Token{
-				Token: token.Error,
-				Pos:   s.u, // that's where the error actually occurred
-				Raw:   []byte(t.Error()),
-			}
-			rv = skipToEOL
-		}
-	default:
-		panic("Invalid argument to emit()")
+func (s *Scanner) emit(t token.Token) scanState {
+	if s.emitToken(&Token{
+		Token: t,
+		Pos:   s.s,
+		Raw:   s.b[s.s.Offset:s.n.Offset],
+	}) {
+		return scanAny
 	}
+	return nil
+}
+
+// emitToken emits the given token. Returns false if the scanner has been aborted
+// or the last token is EOF.
+//
+func (s *Scanner) emitToken(t *Token) bool {
 	for {
 		select {
-		case s.c <- tok:
+		case s.c <- *t:
 			s.s = s.n
-			return rv
+			return t.Token != token.EOF
 		case <-s.done:
-			return nil
+			return false
 		}
 	}
+}
+
+// emitError emits an error assuming the general case that the
+// error occurred at s.u
+//
+func (s *Scanner) emitError(err error) scanState {
+	return s.emitErrorAtPos(err, s.u)
+}
+
+func (s *Scanner) emitErrorAtPos(err error, pos Pos) scanState {
+	tok := &Token{
+		Token: token.Error,
+		Pos:   pos, // that's where the error actually occurred
+		Raw:   []byte(err.Error()),
+	}
+	if s.emitToken(tok) {
+		return skipToEOL
+	}
+	return nil
 }
 
 func (s *Scanner) next() (rune, error) {
@@ -153,7 +157,10 @@ func (s *Scanner) undo() {
 func scanAny(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
-		return s.emit(err)
+		if err == io.EOF {
+			return s.emit(token.EOF)
+		}
+		return s.emitError(err)
 	}
 	switch r {
 	case '\n':
@@ -179,12 +186,15 @@ func scanAny(s *Scanner) scanState {
 		case unicode.IsSpace(r):
 			return scanSpace
 		case r >= '0' && r <= '9':
-			return scanImmediate(r)
+			if r != '0' {
+				return scanInt(10)
+			}
+			return scanIntBase
 		case unicode.IsLetter(r) || r == '_':
 			s.t = token.Identifier
 			return scanIdentifier
 		}
-		return s.emit(fmt.Errorf("illegal symbol %s", strconv.QuoteRune(r)))
+		return s.emitError(fmt.Errorf("illegal symbol %s", strconv.QuoteRune(r)))
 	}
 }
 
@@ -223,20 +233,13 @@ func scanComment(s *Scanner) scanState {
 	}
 }
 
-func scanImmediate(r rune) scanState {
-	if r != '0' {
-		return scanInt(10)
-	}
-	return scanBaseX
-}
-
-func scanBaseX(s *Scanner) scanState {
+func scanIntBase(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
 		if err == io.EOF {
 			return s.emit(token.Immediate)
 		}
-		return s.emit(err)
+		return s.emitError(err)
 	}
 	switch {
 	case r == 'b' || r == 'B':
@@ -249,15 +252,20 @@ func scanBaseX(s *Scanner) scanState {
 	case r >= '0' && r <= '9':
 		return scanInt(8)
 	default:
-		return s.emit(fmt.Errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r)))
+		return s.emitError(fmt.Errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r)))
 	}
 }
 
-func wellFormedInt(n []byte, base int) interface{} {
-	if (base == 2 || base == 10) && len(n) > 0 || len(n) > 2 {
-		return token.Immediate
+// emitInt is the final stage of int scanning. It checks if the
+// immediate value is well-formed. (i.e the minimum amount of digits)
+// then emits the appropriate value.
+//
+func emitInt(s *Scanner, base int) scanState {
+	// len is at least one. Bases other than 8 and 10 need at least 3 bytes.
+	if base == 8 || base == 10 || s.n.Offset-s.s.Offset > 2 {
+		return s.emit(token.Immediate)
 	}
-	return fmt.Errorf("malformed immediate value %q", n)
+	return s.emitErrorAtPos(fmt.Errorf("malformed immediate value %q", s.b[s.s.Offset:s.n.Offset]), s.s)
 }
 
 func scanInt(base int) scanState {
@@ -266,9 +274,9 @@ func scanInt(base int) scanState {
 			r, err := s.next()
 			if err != nil {
 				if err == io.EOF {
-					return s.emit(wellFormedInt(s.b[s.s.Offset:s.n.Offset], base))
+					return emitInt(s, base)
 				}
-				return s.emit(err)
+				return s.emitError(err)
 			}
 			rl := unicode.ToLower(r)
 			if rl >= '0' && (base <= 10 && rl <= '0'+rune(base-1) || base > 10 && (rl <= '9' || rl >= 'a' && rl <= 'f')) {
@@ -276,9 +284,9 @@ func scanInt(base int) scanState {
 			}
 			if isWordSeparator(r) {
 				s.undo()
-				return s.emit(wellFormedInt(s.b[s.s.Offset:s.n.Offset], base))
+				return emitInt(s, base)
 			}
-			return s.emit(fmt.Errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base))
+			return s.emitError(fmt.Errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base))
 		}
 	}
 }
@@ -291,7 +299,7 @@ func scanIdentifier(s *Scanner) scanState {
 				// catch EOF next time
 				return s.emit(s.t)
 			}
-			return s.emit(err)
+			return s.emitError(err)
 		}
 		if unicode.In(r, unicode.Letter, unicode.Digit) || r == '_' {
 			continue
