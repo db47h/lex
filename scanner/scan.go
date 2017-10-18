@@ -1,5 +1,16 @@
 // Package scanner implements a scanner for assembler source text.
 //
+// This is a concurrent scanner loosely based on Ivy (https://github.com/robpike/ivy).
+//
+// While it essentially behaves as any other scanner as seen from the API,
+// there are a few things to be aware of:
+//
+// Init() and Close() should be called only once. There are no checks for this.
+// As a result, a scanner cannot be re-used to process a different stream of data.
+//
+// If the last call to scan returns a token.EOF, no further calls to Scan should be made.
+// In the current version, the caller would block forever.
+//
 package scanner
 
 import (
@@ -20,14 +31,17 @@ type Pos struct {
 	Column int // starts at 1
 }
 
-// Token represents a scanned token
+// Token represents a scanned token.
 //
 type Token struct {
 	token.Token
-	Pos
-	Raw []byte
+	Pos        // Start position
+	Raw []byte // Raw bytes for the token
 }
 
+// String returns a string representation of the token. This should be used only for debugging purposes as
+// the output format is not guaranteed to be stable.
+//
 func (t *Token) String() string {
 	if t.Token == token.Error {
 		return fmt.Sprintf("%d:%d: %s \"%s\"", t.Pos.Line, t.Pos.Column, t.Token, t.Raw)
@@ -83,7 +97,8 @@ func (s *Scanner) Close() {
 	}
 }
 
-// emit emits a single token. The i argument must be either a token.Token or an error.
+// emit emits a single token. Returns the next state depending
+// on the success of the operation.
 //
 func (s *Scanner) emit(t token.Token) scanState {
 	if s.emitToken(&Token{
@@ -97,7 +112,8 @@ func (s *Scanner) emit(t token.Token) scanState {
 }
 
 // emitToken emits the given token. Returns false if the scanner has been aborted
-// or the last token is EOF.
+// or the last token is EOF. If false is returned, the caller (usually a scanState)
+// should return nil to abort the scanner's loop.
 //
 func (s *Scanner) emitToken(t *Token) bool {
 	for {
@@ -112,12 +128,16 @@ func (s *Scanner) emitToken(t *Token) bool {
 }
 
 // emitError emits an error assuming the general case that the
-// error occurred at s.u
+// error occurred at s.u. See emitErrorAtPos.
 //
 func (s *Scanner) emitError(err error) scanState {
 	return s.emitErrorAtPos(err, s.u)
 }
 
+// emitErrorAtPos emits an error Token at the given pos. The Raw value of the
+// Token is set to the error's string representation. Places the scanner in
+// skipToEOL state (i.e. all input until the next EOL is ignored).
+//
 func (s *Scanner) emitErrorAtPos(err error, pos Pos) scanState {
 	tok := &Token{
 		Token: token.Error,
