@@ -5,7 +5,6 @@ package scanner
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"unicode"
 	"unicode/utf8"
@@ -254,15 +253,20 @@ func scanBaseX(s *Scanner) scanState {
 	}
 }
 
+func wellFormedInt(n []byte, base int) interface{} {
+	if (base == 2 || base == 10) && len(n) > 0 || len(n) > 2 {
+		return token.Immediate
+	}
+	return fmt.Errorf("malformed immediate value %q", n)
+}
+
 func scanInt(base int) scanState {
-	fmt.Fprintf(os.Stderr, "scanInt %d", base)
 	return func(s *Scanner) scanState {
 		for {
 			r, err := s.next()
 			if err != nil {
 				if err == io.EOF {
-					// TODO verify that immediate is well-formed
-					return s.emit(token.Immediate)
+					return s.emit(wellFormedInt(s.b[s.s.Offset:s.n.Offset], base))
 				}
 				return s.emit(err)
 			}
@@ -272,8 +276,7 @@ func scanInt(base int) scanState {
 			}
 			if isWordSeparator(r) {
 				s.undo()
-				// TODO verify that immediate is well-formed
-				return s.emit(token.Immediate)
+				return s.emit(wellFormedInt(s.b[s.s.Offset:s.n.Offset], base))
 			}
 			return s.emit(fmt.Errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base))
 		}

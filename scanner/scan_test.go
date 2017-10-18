@@ -34,9 +34,9 @@ func TestScanner_Scan(t *testing.T) {
 			"2:1: Immediate \"12\"", "2:3: EOL \"\\n\"",
 			"3:2: Error \"illegal symbol 'a' in base 10 immediate value\"", "3:3: EOF \"\"",
 		}},
-		{"immediate16", "0x24(r0)", []string{
-			//			"1:1: Error \"malformed immediate value \"0x\"", "1:3: EOL \"\\n\"",
-			"1:1: Immediate \"0x24\"", "1:5: LeftParen \"(\"",
+		{"immediate16", "0x\n0x24(r0)", []string{
+			"1:1: Error \"malformed immediate value \"0x\"\"", "1:3: EOL \"\\n\"",
+			"2:1: Immediate \"0x24\"", "2:5: LeftParen \"(\"",
 		}},
 	}
 	for _, tt := range tests {
