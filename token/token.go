@@ -12,18 +12,28 @@ type Token uint
 // Token IDs
 //
 const (
-	EOF        Token = iota // end of file
-	EOL                     // end of line
-	Error                   // error
-	LeftParen               // (
-	RightParen              // )
-	Colon                   // :
-	Comma                   // ,
-	Space                   //
-	Comment                 // ; - and skip to EOL
-	Directive               // .identifier
-	BuiltIn                 // %identifier
-	Identifier              // any valid identifier
-	Immediate               // immediate
-	LocalLabel              // local label (1f, 0b, etc.)
+	EOF          Token = iota // end of file
+	EOL                       // end of line
+	Error                     // error
+	LeftParen                 // (
+	RightParen                // )
+	LeftBracket               // [
+	RightBracket              // ]
+	Colon                     // :
+	Comma                     // ,
+	Space                     //
+	Comment                   // ; - and skip to EOL
+	Dot                       // '.'
+	Identifier                // any valid identifier
+	Immediate                 // immediate
+	LocalLabel                // local label (1f, 0b, etc.)
+	Backslash                 // \
+	OpPlus                    // +
+	OpMinus                   // -
+	OpFactor                  // *
+	OpDiv                     // /
+	OpMod                     // %
+	OpXor                     // ^, also used as unary 'not'
+	OpAnd                     // &
+	OpOr                      // |
 )

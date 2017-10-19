@@ -55,10 +55,9 @@ type scanState func(s *Scanner) scanState
 //
 type Scanner struct {
 	b    []byte
-	t    token.Token // hint for scanIdentifier
-	s    Pos         // token start pos
-	n    Pos         // next rune to read by next()
-	u    Pos         // saved position to undo last call to next()
+	s    Pos // token start pos
+	n    Pos // next rune to read by next()
+	u    Pos // saved position to undo last call to next()
 	c    chan Token
 	done chan struct{}
 }
@@ -134,6 +133,15 @@ func (s *Scanner) emitError(err error) scanState {
 	return s.emitErrorAtPos(err, s.u)
 }
 
+// emitErrorOrToken emits an error or the given token if the error is nil or EOF.
+//
+func (s *Scanner) emitErrorOrToken(err error, t token.Token) scanState {
+	if err == nil || err == io.EOF {
+		return s.emit(t)
+	}
+	return s.emitError(err)
+}
+
 // emitErrorAtPos emits an error Token at the given pos. The Raw value of the
 // Token is set to the error's string representation. Places the scanner in
 // skipToEOL state (i.e. all input until the next EOL is ignored).
@@ -177,10 +185,7 @@ func (s *Scanner) undo() {
 func scanAny(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
-		if err == io.EOF {
-			return s.emit(token.EOF)
-		}
-		return s.emitError(err)
+		return s.emitErrorOrToken(err, token.EOF)
 	}
 	switch r {
 	case '\n':
@@ -189,47 +194,70 @@ func scanAny(s *Scanner) scanState {
 		return s.emit(token.LeftParen)
 	case ')':
 		return s.emit(token.RightParen)
-	case ':':
+	case '[':
+		return s.emit(token.LeftBracket)
+	case ']':
+		return s.emit(token.RightBracket)
+	case ':': // TODO: allowed inside symbols on some platforms
 		return s.emit(token.Colon)
+	case '\\': // prefix for macro arguments
+		return s.emit(token.Backslash)
 	case ',':
 		return s.emit(token.Comma)
+	case '+':
+		return s.emit(token.OpPlus)
+	case '-':
+		return s.emit(token.OpMinus)
+	case '*':
+		return s.emit(token.OpFactor)
+	case '/':
+		return s.emit(token.OpDiv)
+	case '%':
+		return s.emit(token.OpMod)
+	case '&':
+		return s.emit(token.OpAnd)
+	case '|':
+		return s.emit(token.OpOr)
+	case '^':
+		return s.emit(token.OpXor)
 	case ';':
 		return scanComment
-	case '.':
-		s.t = token.Directive
-		return scanIdentifier
-	case '%':
-		s.t = token.BuiltIn
-		return scanIdentifier
-	default:
-		switch {
-		case unicode.IsSpace(r):
-			return scanSpace
-		case r >= '0' && r <= '9':
-			if r != '0' {
-				return scanInt(10)
-			}
-			return scanIntBase
-		case unicode.IsLetter(r) || r == '_':
-			s.t = token.Identifier
-			return scanIdentifier
-		}
-		return s.emitError(fmt.Errorf("illegal symbol %s", strconv.QuoteRune(r)))
+	case '.': // not necessarily a word separator
+		return s.emit(token.Dot)
 	}
+
+	switch {
+	case unicode.IsSpace(r):
+		return scanSpace
+	case r >= '0' && r <= '9':
+		if r != '0' {
+			return scanInt(10)
+		}
+		return scanIntBase
+	case unicode.IsLetter(r) || r == '_':
+		return scanIdentifier
+	}
+	return s.emitError(fmt.Errorf("illegal symbol %s", strconv.QuoteRune(r)))
 }
 
 func isWordSeparator(r rune) bool {
-	// TODO: this may need updating if we add symbols to the syntax
+	// This needs updating if we add symbols to the syntax
 	// these are valid characters immediately following (and marking the end of) a number
-	return r == '(' || r == ')' || r == ':' || r == ',' || unicode.IsSpace(r) || r == ';'
+	switch r {
+	case '(', ')', '[', ']', '\\', ',', ';', '+', '-', '*', '/', '%', '&', '|', '^':
+		return true
+	case ':': // TODO: allowed inside symbols on some platforms
+		return true
+	default:
+		return unicode.IsSpace(r)
+	}
 }
 
 func scanSpace(s *Scanner) scanState {
 	for {
 		r, err := s.next()
-		if err == io.EOF {
-			// catch EOF next time
-			return s.emit(token.Space)
+		if err != nil {
+			return s.emitErrorOrToken(err, token.Space)
 		}
 		if unicode.IsSpace(r) && r != '\n' {
 			continue
@@ -243,8 +271,8 @@ func scanSpace(s *Scanner) scanState {
 func scanComment(s *Scanner) scanState {
 	for {
 		r, err := s.next()
-		if err == io.EOF {
-			return s.emit(token.Comment)
+		if err != nil {
+			return s.emitErrorOrToken(err, token.Comment)
 		}
 		if r == '\n' {
 			s.undo()
@@ -262,10 +290,7 @@ func scanComment(s *Scanner) scanState {
 func scanIntBase(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
-		if err == io.EOF {
-			return s.emit(token.Immediate)
-		}
-		return s.emitError(err)
+		return s.emitErrorOrToken(err, token.Immediate)
 	}
 	switch {
 	case r >= '0' && r <= '9':
@@ -298,9 +323,9 @@ func emitInt(s *Scanner, base int) scanState {
 // Supported bases are 8, 10 and 16.
 //
 func scanInt(base int) scanState {
-	max := '9'
-	if base == 8 {
-		max = '7'
+	max := '0'
+	if base < 10 {
+		max = '0' + rune(base-1)
 	}
 	return func(s *Scanner) scanState {
 		for {
@@ -327,21 +352,25 @@ func scanInt(base int) scanState {
 	}
 }
 
+// scanIdentifier scans an identifier starting with _ or a unicode letter
+// followed by any combination of printable unicode characters that are not
+// word separators (operators, brackets, backslash, ',', ';', ':'). This
+// includes letters, marks, numbers, punctuation, symbols, from categories L, M,
+// N, P, S.
+//
 func scanIdentifier(s *Scanner) scanState {
 	for {
 		r, err := s.next()
 		if err != nil {
-			if err == io.EOF {
-				// catch EOF next time
-				return s.emit(s.t)
-			}
-			return s.emitError(err)
+			return s.emitErrorOrToken(err, token.Identifier)
 		}
-		if unicode.In(r, unicode.Letter, unicode.Digit) || r == '_' {
-			continue
+		if isWordSeparator(r) {
+			s.undo()
+			return s.emit(token.Identifier)
 		}
-		s.undo()
-		return s.emit(s.t)
+		if !unicode.IsPrint(r) {
+			return s.emitError(fmt.Errorf("illegal symbol in identifier %s", strconv.QuoteRune(r)))
+		}
 	}
 }
 
@@ -351,12 +380,13 @@ func scanIdentifier(s *Scanner) scanState {
 func skipToEOL(s *Scanner) scanState {
 	for {
 		r, err := s.next()
+		// ignore all errors but EOF
 		if err == io.EOF {
 			// place EOF in the correct position
 			s.s = s.n
 			return s.emit(token.EOF)
 		}
-		if r == '\n' {
+		if r == '\n' { // err == nil implied
 			s.undo()
 			// reset start for '\n'
 			s.s = s.n
@@ -371,10 +401,7 @@ func skipToEOL(s *Scanner) scanState {
 func scanLocalLabel(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
-		if err == io.EOF {
-			return s.emit(token.LocalLabel)
-		}
-		return s.emitError(err)
+		return s.emitErrorOrToken(err, token.LocalLabel)
 	}
 	if isWordSeparator(r) {
 		s.undo()
