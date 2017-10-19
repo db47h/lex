@@ -253,6 +253,12 @@ func scanComment(s *Scanner) scanState {
 	}
 }
 
+// scanIntBase reads the character foillowing a leading 0
+// to determine the number base or directly emit a 0 literal.
+// Supported number bases are 8, 10 and 16.
+//
+// Special case: a leading 0 followed by 'b' or 'f' is a local label.
+//
 func scanIntBase(s *Scanner) scanState {
 	r, err := s.next()
 	if err != nil {
@@ -262,33 +268,40 @@ func scanIntBase(s *Scanner) scanState {
 		return s.emitError(err)
 	}
 	switch {
-	case r == 'b' || r == 'B':
-		return scanInt(2)
+	case r >= '0' && r <= '9':
+		return scanInt(8)
 	case r == 'x' || r == 'X':
 		return scanInt(16)
+	case r == 'b' || r == 'f':
+		return scanLocalLabel
 	case isWordSeparator(r):
 		s.undo()
 		return s.emit(token.Immediate)
-	case r >= '0' && r <= '9':
-		return scanInt(8)
 	default:
 		return s.emitError(fmt.Errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r)))
 	}
 }
 
-// emitInt is the final stage of int scanning. It checks if the
+// emitInt is the final stage of int scanning for ints with len > 1. It checks if the
 // immediate value is well-formed. (i.e the minimum amount of digits)
 // then emits the appropriate value.
 //
 func emitInt(s *Scanner, base int) scanState {
-	// len is at least one. Bases other than 8 and 10 need at least 3 bytes.
-	if base == 8 || base == 10 || s.n.Offset-s.s.Offset > 2 {
+	// len is at least one. Base 16 needs at least 3 bytes.
+	if base != 16 || s.n.Offset-s.s.Offset > 2 {
 		return s.emit(token.Immediate)
 	}
 	return s.emitErrorAtPos(fmt.Errorf("malformed immediate value %q", s.b[s.s.Offset:s.n.Offset]), s.s)
 }
 
+// scanInt scans the 2nd to n digit of an int in the given base.
+// Supported bases are 8, 10 and 16.
+//
 func scanInt(base int) scanState {
+	max := '9'
+	if base == 8 {
+		max = '7'
+	}
 	return func(s *Scanner) scanState {
 		for {
 			r, err := s.next()
@@ -299,8 +312,11 @@ func scanInt(base int) scanState {
 				return s.emitError(err)
 			}
 			rl := unicode.ToLower(r)
-			if rl >= '0' && (base <= 10 && rl <= '0'+rune(base-1) || base > 10 && (rl <= '9' || rl >= 'a' && rl <= 'f')) {
+			if rl >= '0' && rl <= max || base == 16 && rl >= 'a' && rl <= 'f' {
 				continue
+			}
+			if r == 'b' || r == 'f' {
+				return scanLocalLabel
 			}
 			if isWordSeparator(r) {
 				s.undo()
@@ -347,4 +363,22 @@ func skipToEOL(s *Scanner) scanState {
 			return scanAny
 		}
 	}
+}
+
+// scanLocalLabel scans the character following the final 'b' or 'f'
+// and makes sure it's a word separator
+//
+func scanLocalLabel(s *Scanner) scanState {
+	r, err := s.next()
+	if err != nil {
+		if err == io.EOF {
+			return s.emit(token.LocalLabel)
+		}
+		return s.emitError(err)
+	}
+	if isWordSeparator(r) {
+		s.undo()
+		return s.emit(token.LocalLabel)
+	}
+	return s.emitError(fmt.Errorf("malformed local label or immediate value: illegal symbol %s", strconv.QuoteRune(r)))
 }

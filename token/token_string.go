@@ -4,9 +4,9 @@ package token
 
 import "fmt"
 
-const _Token_name = "EOFEOLErrorLeftParenRightParenColonCommaSpaceCommentDirectiveBuiltInIdentifierImmediate"
+const _Token_name = "EOFEOLErrorLeftParenRightParenColonCommaSpaceCommentDirectiveBuiltInIdentifierImmediateLocalLabel"
 
-var _Token_index = [...]uint8{0, 3, 6, 11, 20, 30, 35, 40, 45, 52, 61, 68, 78, 87}
+var _Token_index = [...]uint8{0, 3, 6, 11, 20, 30, 35, 40, 45, 52, 61, 68, 78, 87, 97}
 
 func (i Token) String() string {
 	if i >= Token(len(_Token_index)-1) {

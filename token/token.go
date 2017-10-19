@@ -25,4 +25,5 @@ const (
 	BuiltIn                 // %identifier
 	Identifier              // any valid identifier
 	Immediate               // immediate
+	LocalLabel              // local label (1f, 0b, etc.)
 )
