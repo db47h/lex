@@ -4,9 +4,9 @@ package token
 
 import "fmt"
 
-const _Token_name = "EOFEOLErrorLeftParenRightParenLeftBracketRightBracketColonCommaSpaceCommentDotIdentifierImmediateLocalLabelBackslashOpPlusOpMinusOpFactorOpDivOpModOpXorOpAndOpOr"
+const _Token_name = "EOFEOLErrorLeftParenRightParenLeftBracketRightBracketColonCommaSpaceCommentDotIdentifierImmediateLocalLabelBackslashOpPlusOpMinusOpFactorOpDivOpModOpXorOpAndOpOrBuiltIn"
 
-var _Token_index = [...]uint8{0, 3, 6, 11, 20, 30, 41, 53, 58, 63, 68, 75, 78, 88, 97, 107, 116, 122, 129, 137, 142, 147, 152, 157, 161}
+var _Token_index = [...]uint8{0, 3, 6, 11, 20, 30, 41, 53, 58, 63, 68, 75, 78, 88, 97, 107, 116, 122, 129, 137, 142, 147, 152, 157, 161, 168}
 
 func (i Token) String() string {
 	if i >= Token(len(_Token_index)-1) {

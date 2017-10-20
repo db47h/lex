@@ -60,6 +60,9 @@ func NewParser(f string, s *scanner.Scanner) *Parser {
 	return &Parser{f, s, nil}
 }
 
+// ParseExpr parses expressions using a precedence climbing algorithm.
+// See http://www.engr.mun.ca/~theo/Misc/exp_parsing.htm#climbing.
+//
 func (p *Parser) ParseExpr() (*Node, error) {
 	n, err := p.parseExpr(0)
 	if err != nil {
@@ -136,7 +139,11 @@ func (p *Parser) parseExpr(prec int) (*Node, error) {
 	for {
 		t := p.nextNonSpace()
 		pn, ok := precBin[t.Token]
-		if !ok || pn.prec < prec {
+		if !ok {
+			p.putBack(t)
+			break
+		}
+		if pn.prec < prec {
 			p.putBack(t)
 			break
 		}
@@ -151,30 +158,63 @@ func (p *Parser) parseExpr(prec int) (*Node, error) {
 			return n, err
 		}
 	}
-	// here, we can check for a func call
 	return n, nil
 }
 
-func (p *Parser) parsePrimary() (*Node, error) {
+func (p *Parser) parsePrimary() (n *Node, err error) {
+	// TODO: imnplement special case handling of %identifier for built-ins
 	t := p.nextNonSpace()
-	if prec, ok := precUnary[t.Token]; ok {
-		n, err := p.parseExpr(prec.prec)
-		return &Node{t, n, nil}, err
+	if t.Token == token.OpMod {
+		t2, ok := p.expect(token.Identifier)
+		if ok {
+			t.Token = token.BuiltIn
+			t.Raw = append([]byte{'%'}, t2.Raw...)
+		}
 	}
-	switch t.Token {
-	case token.LeftParen:
-		n, err := p.parseExpr(0)
+	if prec, ok := precUnary[t.Token]; ok {
+		n, err = p.parseExpr(prec.prec)
+		n = &Node{t, n, nil}
 		if err != nil {
 			return n, err
 		}
-		_, ok := p.expect(token.RightParen)
-		if !ok {
-			return n, fmt.Errorf("expected ')'. Matching start '(' at %s", t.Pos.String())
+	} else {
+		switch t.Token {
+		case token.LeftParen:
+			n, err = p.parseExpr(0)
+			if err != nil {
+				return n, err
+			}
+			_, ok := p.expect(token.RightParen)
+			if !ok {
+				return n, fmt.Errorf("expected ')'. Matching start '(' at %s", t.Pos.String())
+			}
+		case token.Immediate, token.Identifier, token.LocalLabel, token.BuiltIn:
+			n = &Node{t, nil, nil}
+		default:
+			p.putBack(t)
+			return nil, fmt.Errorf("unexpected token %s in primary", t.String())
 		}
-		return n, nil
-	case token.Immediate, token.Identifier, token.LocalLabel:
-		return &Node{t, nil, nil}, nil
 	}
-	p.putBack(t)
-	return nil, fmt.Errorf("unexpected token %s in primary", t.String())
+
+	// postfix function calls.
+	// LTR associative. Has higher precedence than anything else.
+	for {
+		t = p.nextNonSpace()
+		if t.Token == token.LeftParen {
+			t.Raw = []byte("·")
+			n1, err := p.parseExpr(0)
+			n = &Node{t, n, n1}
+			if err != nil {
+				return nil, err
+			}
+			_, ok := p.expect(token.RightParen)
+			if !ok {
+				return n, fmt.Errorf("missing ')' in fn call. Matching start '(' at %s", t.Pos.String())
+			}
+		} else {
+			p.putBack(t)
+			break
+		}
+	}
+	return n, nil
 }

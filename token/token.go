@@ -36,4 +36,5 @@ const (
 	OpXor                     // ^, also used as unary 'not'
 	OpAnd                     // &
 	OpOr                      // |
+	BuiltIn                   // %identifier not identified by the lexer but by the parser
 )
