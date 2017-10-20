@@ -31,6 +31,10 @@ type Pos struct {
 	Column int // starts at 1
 }
 
+func (p *Pos) String() string {
+	return fmt.Sprintf("%d:%d", p.Line, p.Column)
+}
+
 // Token represents a scanned token.
 //
 type Token struct {
