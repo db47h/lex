@@ -28,23 +28,25 @@ func (n *Node) String() string {
 	return s + ")"
 }
 
-type prec struct {
+type opSpec struct {
 	prec int
 	ltr  bool
 }
 
-var precBin = map[token.Token]prec{
-	token.OpOr:     {0, true},
-	token.OpXor:    {1, true},
-	token.OpAnd:    {2, true},
-	token.OpPlus:   {3, true},
-	token.OpMinus:  {3, true},
-	token.OpFactor: {4, true},
-	token.OpDiv:    {4, true},
-	token.OpMod:    {4, true},
+var infix = map[token.Token]opSpec{
+	token.OpOr:      {0, true},
+	token.OpXor:     {1, true},
+	token.OpAnd:     {2, true},
+	token.OpPlus:    {3, true},
+	token.OpMinus:   {3, true},
+	token.OpFactor:  {4, true},
+	token.OpDiv:     {4, true},
+	token.OpMod:     {4, true},
+	token.LeftParen: {5, true},
 }
 
-var precUnary = map[token.Token]prec{
+// unary operators are always left-to-right associative.
+var prefix = map[token.Token]opSpec{
 	token.OpPlus:  {5, false},
 	token.OpMinus: {5, false},
 	token.OpXor:   {5, false},
@@ -81,10 +83,17 @@ func (p *Parser) skipToEOL() {
 	}
 }
 
+// expectEndOfExpr checks wether the next token marks the end of an expression.
+// Expressions are terminated by a comma, EOL or EOF. The token marking the end
+// of the expression is never consumed.
+// On platforms with register displacement notation using brackets [], the opening
+// bracket could be added as an end of expression marker.
+//
 func (p *Parser) expectEndOfExpr() error {
 	t := p.nextNonSpace()
 	switch t.Token {
 	case token.Comma:
+		p.putBack(t)
 		return nil
 	case token.EOL, token.EOF:
 		p.putBack(t)
@@ -131,19 +140,24 @@ func (p *Parser) putBack(t *scanner.Token) {
 	p.n = t
 }
 
-func (p *Parser) parseExpr(prec int) (*Node, error) {
+// parseExpr returns the AST for an expression.
+// In the AST, function calls marked by a node with token.LeftParen
+// identify either a built-in function (if the lhs of the node is a token.BuiltIn)
+//  or a register displacement (any other lhs, assumed to be an immediate).
+//
+func (p *Parser) parseExpr(pmin int) (*Node, error) {
 	n, err := p.parsePrimary()
 	if err != nil {
 		return n, err
 	}
 	for {
 		t := p.nextNonSpace()
-		pn, ok := precBin[t.Token]
+		pn, ok := infix[t.Token]
 		if !ok {
 			p.putBack(t)
 			break
 		}
-		if pn.prec < prec {
+		if pn.prec < pmin {
 			p.putBack(t)
 			break
 		}
@@ -161,8 +175,12 @@ func (p *Parser) parseExpr(prec int) (*Node, error) {
 	return n, nil
 }
 
-func (p *Parser) parsePrimary() (n *Node, err error) {
-	// TODO: imnplement special case handling of %identifier for built-ins
+// nextPrimary returns the next token where the token is expected to be a primary.
+// Filters special cases like builtins that are composed of two other tokens:
+//
+//		Builtin := OpMod Identifier
+//
+func (p *Parser) nextPrimary() *scanner.Token {
 	t := p.nextNonSpace()
 	if t.Token == token.OpMod {
 		t2, ok := p.expect(token.Identifier)
@@ -171,7 +189,12 @@ func (p *Parser) parsePrimary() (n *Node, err error) {
 			t.Raw = append([]byte{'%'}, t2.Raw...)
 		}
 	}
-	if prec, ok := precUnary[t.Token]; ok {
+	return t
+}
+
+func (p *Parser) parsePrimary() (n *Node, err error) {
+	t := p.nextPrimary()
+	if prec, ok := prefix[t.Token]; ok {
 		n, err = p.parseExpr(prec.prec)
 		n = &Node{t, n, nil}
 		if err != nil {

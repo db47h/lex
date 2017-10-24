@@ -9,7 +9,7 @@ import (
 
 func TestNewParser(t *testing.T) {
 	var s scanner.Scanner
-	exp := "3+-%low(4+3)*2"
+	exp := "--3(a2)(a1)"
 	s.Init([]byte(exp))
 	defer s.Close()
 	p := parser.NewParser("<stdin>", &s)
