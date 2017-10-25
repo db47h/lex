@@ -1,14 +1,14 @@
-package scanner_test
+package lexer_test
 
 import (
 	"fmt"
 
-	"github.com/db47h/asm/scanner"
+	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
 )
 
 // Idiomatic usage
-func ExampleScanner() {
+func ExampleLexer() {
 	input := `
 .org 0x200
 	; strcmp compares strings in a0 and a1
@@ -29,19 +29,17 @@ strcmp:
 	jalr zero, ra, 0
 `
 
-	var s scanner.Scanner
-
-	s.Init([]byte(input))
-	defer s.Close()
+	l := lexer.New([]byte(input))
+	defer l.Close()
 
 	for {
-		t := s.Scan()
+		lx := l.Lex()
 		// eat spaces
-		if t.Token == token.Space {
+		if lx.Token == token.Space {
 			continue
 		}
-		fmt.Println(t.String())
-		if t.Token == token.EOF {
+		fmt.Println(lx.String())
+		if lx.Token == token.EOF {
 			break
 		}
 	}

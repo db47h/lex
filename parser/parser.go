@@ -1,65 +1,162 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/db47h/asm/scanner"
+	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
 )
 
 type Node struct {
-	t *scanner.Token
-	l *Node
-	r *Node
+	l *lexer.Lexeme
+	c []*Node
+}
+
+func tokString(l *lexer.Lexeme) string {
+	switch v := l.Value.(type) {
+	case string:
+		return v
+	case interface {
+		String() string
+	}:
+		return v.String()
+	case error:
+		return v.Error()
+	default:
+		return l.Token.String()
+	}
 }
 
 func (n *Node) String() string {
-	if n.l == nil && n.r == nil {
-		return string(n.t.Raw)
+	if len(n.c) == 0 {
+		return tokString(n.l)
 	}
 	s := "("
-	if n.r != nil {
-		// binary
-		s += n.l.String() + string(n.t.Raw) + n.r.String()
+	if len(n.c) < 2 {
+		s += tokString(n.l) + " " + n.c[0].String()
 	} else {
-		// unary
-		s += string(n.t.Raw) + n.l.String()
+		for i := range n.c[:len(n.c)-1] {
+			s += n.c[i].String() + tokString(n.l)
+		}
+		s += n.c[len(n.c)-1].String()
 	}
 	return s + ")"
 }
 
-type opSpec struct {
+type leftOpSpec struct {
 	prec int
-	ltr  bool
+	led  func(p *Parser, lhs *Node, l *lexer.Lexeme, s *leftOpSpec) (*Node, error)
+	ra   bool
 }
 
-var infix = map[token.Token]opSpec{
-	token.OpOr:      {0, true},
-	token.OpXor:     {1, true},
-	token.OpAnd:     {2, true},
-	token.OpPlus:    {3, true},
-	token.OpMinus:   {3, true},
-	token.OpFactor:  {4, true},
-	token.OpDiv:     {4, true},
-	token.OpMod:     {4, true},
-	token.LeftParen: {5, true},
+var leftOp = map[token.Token]leftOpSpec{
+	token.Comma:     {0, leftChain, false},
+	token.OpOr:      {1, leftBinOp, false},
+	token.OpXor:     {2, leftBinOp, false},
+	token.OpAnd:     {3, leftBinOp, false},
+	token.OpPlus:    {4, leftBinOp, false},
+	token.OpMinus:   {4, leftBinOp, false},
+	token.OpFactor:  {5, leftBinOp, false},
+	token.OpDiv:     {5, leftBinOp, false},
+	token.OpMod:     {5, leftBinOp, false},
+	token.Backslash: {6, leftPostfix, false},
+	token.LeftParen: {6, leftParen, false},
 }
 
-// unary operators are always left-to-right associative.
-var prefix = map[token.Token]opSpec{
-	token.OpPlus:  {5, false},
-	token.OpMinus: {5, false},
-	token.OpXor:   {5, false},
+type nullOpSpec struct {
+	prec int
+	nud  func(p *Parser, l *lexer.Lexeme, s *nullOpSpec) (*Node, error)
+}
+
+var nullOp = map[token.Token]nullOpSpec{
+	token.OpPlus:     {6, nullUnaryOp},
+	token.OpMinus:    {6, nullUnaryOp},
+	token.OpXor:      {6, nullUnaryOp},
+	token.LeftParen:  {0, nullParen},
+	token.Identifier: {0, nullLeaf},
+	token.Immediate:  {0, nullLeaf},
+}
+
+func leftBinOp(p *Parser, lhs *Node, l *lexer.Lexeme, s *leftOpSpec) (*Node, error) {
+	var prec int
+	if s.ra {
+		prec = s.prec
+	} else {
+		prec = s.prec + 1
+	}
+	rhs, err := p.parseExpr(prec)
+	if err != nil {
+		return nil, err
+	}
+	if lhs.l.Token == l.Token {
+		lhs.c = append(lhs.c, rhs)
+		return lhs, nil
+	}
+	return &Node{l, []*Node{lhs, rhs}}, nil
+}
+
+func leftChain(p *Parser, lhs *Node, l *lexer.Lexeme, s *leftOpSpec) (*Node, error) {
+	rhs, err := p.parseExpr(s.prec + 1)
+	if err != nil {
+		return nil, err
+	}
+	if lhs.l.Token == l.Token {
+		lhs.c = append(lhs.c, rhs)
+		return lhs, nil
+	}
+	return &Node{l, []*Node{lhs, rhs}}, nil
+}
+
+func leftPostfix(_ *Parser, lhs *Node, l *lexer.Lexeme, _ *leftOpSpec) (*Node, error) {
+	return &Node{l, []*Node{lhs}}, nil
+}
+
+func leftParen(p *Parser, lhs *Node, l *lexer.Lexeme, s *leftOpSpec) (*Node, error) {
+	inner, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := p.expect(token.RightParen); !ok {
+		return nil, errors.New("missing )")
+	}
+	l.Value = string('·')
+	return &Node{l, []*Node{lhs, inner}}, nil
+}
+
+func nullUnaryOp(p *Parser, l *lexer.Lexeme, s *nullOpSpec) (*Node, error) {
+	rhs, err := p.parseExpr(s.prec)
+	if err != nil {
+		return nil, err
+	}
+	return &Node{l, []*Node{rhs}}, nil
+}
+
+func nullParen(p *Parser, l *lexer.Lexeme, s *nullOpSpec) (*Node, error) {
+	inner, err := p.parseExpr(0)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := p.expect(token.RightParen); !ok {
+		return nil, errors.New("missing )")
+	}
+	return inner, nil
+}
+
+func nullLeaf(p *Parser, l *lexer.Lexeme, s *nullOpSpec) (*Node, error) {
+	return &Node{l, nil}, nil
 }
 
 type Parser struct {
-	f string
-	s *scanner.Scanner
-	n *scanner.Token
+	f  string
+	l  *lexer.Lexer
+	n  *lexer.Lexeme
+	lt map[token.Token]leftOpSpec
+	nt map[token.Token]nullOpSpec
 }
 
-func NewParser(f string, s *scanner.Scanner) *Parser {
-	return &Parser{f, s, nil}
+func NewParser(f string, l *lexer.Lexer) *Parser {
+	return &Parser{f, l, nil, leftOp, nullOp}
 }
 
 // ParseExpr parses expressions using a precedence climbing algorithm.
@@ -107,37 +204,53 @@ func (p *Parser) expectEndOfExpr() error {
 	}
 }
 
-func (p *Parser) expect(tok token.Token) (t *scanner.Token, ok bool) {
-	t = p.nextNonSpace()
-	if t.Token != tok {
-		p.putBack(t)
-		return t, false
+func (p *Parser) expect(tok token.Token) (l *lexer.Lexeme, ok bool) {
+	l = p.nextNonSpace()
+	if l.Token != tok {
+		p.putBack(l)
+		return l, false
 	}
-	return t, true
+	return l, true
 }
 
-func (p *Parser) next() *scanner.Token {
+func (p *Parser) next() *lexer.Lexeme {
 	if rv := p.n; rv != nil {
 		p.n = nil
 		return rv
 	}
-	t := p.s.Scan()
-	return &t
+	return p.l.Lex()
 }
 
-func (p *Parser) nextNonSpace() *scanner.Token {
-	var t *scanner.Token
+func (p *Parser) nextNonSpace() *lexer.Lexeme {
+	var l *lexer.Lexeme
 	// eat spaces and comments
-	for t = p.next(); t.Token == token.Space || t.Token == token.Comment; t = p.next() {
+	for l = p.next(); l.Token == token.Space || l.Token == token.Comment; l = p.next() {
 	}
-	return t
+	return l
 }
 
-func (p *Parser) putBack(t *scanner.Token) {
+func (p *Parser) putBack(l *lexer.Lexeme) {
 	if p.n != nil {
 		panic("putBack() called twice.")
 	}
-	p.n = t
+	p.n = l
+}
+
+// nextPrimary returns the next token where the token is expected to be a primary.
+// Filters special cases like builtins that are composed of two other tokens:
+//
+//		Builtin := OpMod Identifier
+//
+func (p *Parser) nextPrimary() *lexer.Lexeme {
+	l := p.nextNonSpace()
+	if l.Token == token.OpMod {
+		t2, ok := p.expect(token.Identifier)
+		if ok {
+			l.Token = token.BuiltIn
+			l.Value = "%" + t2.Value.(string)
+		}
+	}
+	return l
 }
 
 // parseExpr returns the AST for an expression.
@@ -146,98 +259,27 @@ func (p *Parser) putBack(t *scanner.Token) {
 //  or a register displacement (any other lhs, assumed to be an immediate).
 //
 func (p *Parser) parseExpr(pmin int) (*Node, error) {
-	n, err := p.parsePrimary()
-	if err != nil {
-		return n, err
+	// primary
+	t := p.nextPrimary()
+	s, ok := p.nt[t.Token]
+	if !ok {
+		return nil, fmt.Errorf("unexpected token %s", t)
 	}
+	n, err := s.nud(p, t, &s)
+	if err != nil {
+		return nil, err
+	}
+	//
 	for {
 		t := p.nextNonSpace()
-		pn, ok := infix[t.Token]
-		if !ok {
+		s, ok := p.lt[t.Token]
+		if !ok || s.prec < pmin {
 			p.putBack(t)
-			break
+			return n, nil
 		}
-		if pn.prec < pmin {
-			p.putBack(t)
-			break
-		}
-		var n1 *Node
-		if pn.ltr {
-			n1, err = p.parseExpr(pn.prec + 1)
-		} else {
-			n1, err = p.parseExpr(pn.prec)
-		}
-		n = &Node{t, n, n1}
+		n, err = s.led(p, n, t, &s)
 		if err != nil {
-			return n, err
+			return nil, err
 		}
 	}
-	return n, nil
-}
-
-// nextPrimary returns the next token where the token is expected to be a primary.
-// Filters special cases like builtins that are composed of two other tokens:
-//
-//		Builtin := OpMod Identifier
-//
-func (p *Parser) nextPrimary() *scanner.Token {
-	t := p.nextNonSpace()
-	if t.Token == token.OpMod {
-		t2, ok := p.expect(token.Identifier)
-		if ok {
-			t.Token = token.BuiltIn
-			t.Raw = append([]byte{'%'}, t2.Raw...)
-		}
-	}
-	return t
-}
-
-func (p *Parser) parsePrimary() (n *Node, err error) {
-	t := p.nextPrimary()
-	if prec, ok := prefix[t.Token]; ok {
-		n, err = p.parseExpr(prec.prec)
-		n = &Node{t, n, nil}
-		if err != nil {
-			return n, err
-		}
-	} else {
-		switch t.Token {
-		case token.LeftParen:
-			n, err = p.parseExpr(0)
-			if err != nil {
-				return n, err
-			}
-			_, ok := p.expect(token.RightParen)
-			if !ok {
-				return n, fmt.Errorf("expected ')'. Matching start '(' at %s", t.Pos.String())
-			}
-		case token.Immediate, token.Identifier, token.LocalLabel, token.BuiltIn:
-			n = &Node{t, nil, nil}
-		default:
-			p.putBack(t)
-			return nil, fmt.Errorf("unexpected token %s in primary", t.String())
-		}
-	}
-
-	// postfix function calls.
-	// LTR associative. Has higher precedence than anything else.
-	for {
-		t = p.nextNonSpace()
-		if t.Token == token.LeftParen {
-			t.Raw = []byte("·")
-			n1, err := p.parseExpr(0)
-			n = &Node{t, n, n1}
-			if err != nil {
-				return nil, err
-			}
-			_, ok := p.expect(token.RightParen)
-			if !ok {
-				return n, fmt.Errorf("missing ')' in fn call. Matching start '(' at %s", t.Pos.String())
-			}
-		} else {
-			p.putBack(t)
-			break
-		}
-	}
-	return n, nil
 }
