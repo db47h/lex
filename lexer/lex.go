@@ -272,7 +272,7 @@ func scanAny(l *Lexer) scanState {
 	case r >= '0' && r <= '9':
 		if r != '0' {
 			l.undo() // let scanInt read the whole number
-			return scanInt(10)
+			return scanIntDigits(10)
 		}
 		return scanIntBase
 	case unicode.IsLetter(r) || r == '_':
@@ -323,8 +323,9 @@ func scanComment(l *Lexer) scanState {
 }
 
 // scanIntBase reads the character foillowing a leading 0 in order to determine
-// the number base or directly emit a 0 literal.
-// Supported number bases are 8, 10 and 16.
+// the number base or directly emit a 0 literal or local label.
+//
+// Supported number bases are 2, 8, 10 and 16.
 //
 // Special case: a leading 0 followed by 'b' or 'f' is a local label.
 //
@@ -335,14 +336,14 @@ func scanIntBase(l *Lexer) scanState {
 	}
 	switch {
 	case r >= '0' && r <= '9':
-		// undo in order to let scanInt read the whole number
+		// undo in order to let scanIntDigits read the whole number
 		// (except the leading 0) or error appropriately if r is >= 8
 		l.undo()
-		return scanInt(8)
+		return scanIntDigits(8)
 	case r == 'x' || r == 'X':
-		return scanInt(16)
-	case r == 'b': // possible LocalLabel caught in scanInt
-		return scanInt(2)
+		return scanIntDigits(16)
+	case r == 'b': // possible LocalLabel caught in scanIntDigits
+		return scanIntDigits(2)
 	case r == 'f':
 		return scanLocalLabel
 	case isWordSeparator(r):
@@ -353,26 +354,11 @@ func scanIntBase(l *Lexer) scanState {
 	}
 }
 
-// emitInt is the final stage of int lexing for ints with len > 1. It checks if the
-// immediate value is well-formed. (i.e the minimum amount of digits)
-// then emits the appropriate value.
+// scanIntDigits scans the 2nd to n digit of an int in the given base.
 //
-// There's a special case with "0b" that will be sent as LocalLabel "0b".
+// Supported bases are 2, 8, 10 and 16.
 //
-func emitInt(l *Lexer, base int32, value *big.Int) scanState {
-	// len is at least one. Base 16 needs at least 3 bytes.
-	if base == 16 && l.n.Offset-l.s.Offset < 3 {
-		return l.emitErrorAtPos(fmt.Errorf("malformed immediate value %q", l.b[l.s.Offset:l.n.Offset]), l.s)
-	} else if base == 2 && l.n.Offset-l.s.Offset == 2 && l.b[l.s.Offset+1] == 'b' {
-		return l.emit(token.LocalLabel, l.tokenString())
-	}
-	return l.emit(token.Immediate, value)
-}
-
-// scanInt scans the 2nd to n digit of an int in the given base.
-// Supported bases are 8, 10 and 16.
-//
-func scanInt(base int32) scanState {
+func scanIntDigits(base int32) scanState {
 	return func(l *Lexer) scanState {
 		v := &big.Int{}
 		var t big.Int
@@ -396,7 +382,7 @@ func scanInt(base int32) scanState {
 				v = v.Add(v, &t)
 				continue
 			}
-			if r == 'b' || r == 'f' {
+			if base == 10 && r == 'b' || r == 'f' {
 				return scanLocalLabel
 			}
 			if isWordSeparator(r) {
@@ -406,6 +392,23 @@ func scanInt(base int32) scanState {
 			return l.emitError(fmt.Errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base))
 		}
 	}
+}
+
+// emitInt is the final stage of int lexing for ints with len > 1. It checks if the
+// immediate value is well-formed. (i.e the minimum amount of digits)
+// then emits the appropriate value.
+//
+// There's a special case with "0b" that will be sent as LocalLabel "0b".
+//
+func emitInt(l *Lexer, base int32, value *big.Int) scanState {
+	// len is at least one. Base 16 needs at least 3 bytes.
+	if base == 16 && l.n.Offset-l.s.Offset < 3 {
+		return l.emitErrorAtPos(fmt.Errorf("malformed immediate value %q", l.b[l.s.Offset:l.n.Offset]), l.s)
+	} else if base == 2 && l.n.Offset-l.s.Offset == 2 && l.b[l.s.Offset+1] == 'b' {
+		// the "0f" case has been filtered out in scanIntBase
+		return l.emit(token.LocalLabel, l.tokenString())
+	}
+	return l.emit(token.Immediate, value)
 }
 
 // scanIdentifier scans an identifier starting with _ or a unicode letter
