@@ -112,8 +112,7 @@ func (l *Lexer) Lex() *Lexeme {
 }
 
 // Close stops the lexer. This function should always be called once the lexer
-// is no longer needed. After Close() has been called, Calling Lex() again wiil
-// result in an undefined behavior.
+// is no longer needed.
 //
 func (l *Lexer) Close() {
 	if l.done != nil {
