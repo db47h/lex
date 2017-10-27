@@ -31,9 +31,9 @@ func (p *Pos) String() string {
 	return fmt.Sprintf("%d:%d", p.Line, p.Column)
 }
 
-// Lexeme represents a lexeme.
+// Item represents a token returned from the lexer.
 //
-type Lexeme struct {
+type Item struct {
 	token.Token
 	Pos   // Start position
 	Value interface{}
@@ -42,16 +42,16 @@ type Lexeme struct {
 // String returns a string representation of the lexeme. This should be used only for debugging purposes as
 // the output format is not guaranteed to be stable.
 //
-func (l *Lexeme) String() string {
-	switch v := l.Value.(type) {
+func (i *Item) String() string {
+	switch v := i.Value.(type) {
 	case string:
-		return fmt.Sprintf("%d:%d: %s %s", l.Pos.Line, l.Pos.Column, l.Token, v)
+		return fmt.Sprintf("%d:%d: %s %s", i.Pos.Line, i.Pos.Column, i.Token, v)
 	case interface {
 		String() string
 	}:
-		return fmt.Sprintf("%d:%d: %s %s", l.Pos.Line, l.Pos.Column, l.Token, v.String())
+		return fmt.Sprintf("%d:%d: %s %s", i.Pos.Line, i.Pos.Column, i.Token, v.String())
 	default:
-		return fmt.Sprintf("%d:%d: %s", l.Pos.Line, l.Pos.Column, l.Token)
+		return fmt.Sprintf("%d:%d: %s", i.Pos.Line, i.Pos.Column, i.Token)
 	}
 }
 
@@ -62,7 +62,7 @@ type Lexer struct {
 	s    Pos // token start pos
 	n    Pos // next rune to read by next()
 	u    Pos // saved position to undo last call to next()
-	c    chan *Lexeme
+	c    chan *Item
 	done chan struct{}
 }
 
@@ -82,7 +82,7 @@ func New(b []byte) *Lexer {
 			Column: 1,
 		},
 		u:    Pos{Line: 0, Column: 0},
-		c:    make(chan *Lexeme),
+		c:    make(chan *Item),
 		done: make(chan struct{}),
 	}
 	go l.run()
@@ -98,17 +98,17 @@ func (l *Lexer) run() {
 // Lex reads source text and returns the next lexeme until EOF. Once this
 // function has returned an EOF token, any further calls to it will panic.
 //
-func (l *Lexer) Lex() *Lexeme {
-	lx := <-l.c
-	if lx == nil {
+func (l *Lexer) Lex() *Item {
+	i := <-l.c
+	if i == nil {
 		// l.c has been closed
-		return &Lexeme{
+		return &Item{
 			Token: token.EOF,
 			Pos:   l.s,
 			Value: nil,
 		}
 	}
-	return lx
+	return i
 }
 
 // Close stops the lexer. This function should always be called once the lexer
@@ -124,7 +124,7 @@ func (l *Lexer) Close() {
 // on the success of the operation.
 //
 func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
-	if l.emitLexeme(&Lexeme{
+	if l.emitLexeme(&Item{
 		Token: t,
 		Pos:   l.s,
 		Value: value,
@@ -138,12 +138,12 @@ func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
 // or the last token is EOF. If false is returned, the caller (usually a scanState)
 // should return nil to abort the lexer's loop.
 //
-func (l *Lexer) emitLexeme(lm *Lexeme) bool {
+func (l *Lexer) emitLexeme(i *Item) bool {
 	for {
 		select {
-		case l.c <- lm:
+		case l.c <- i:
 			l.s = l.n
-			if lm.Token != token.EOF {
+			if i.Token != token.EOF {
 				return true
 			}
 			return false
@@ -165,12 +165,12 @@ func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
 //  in skipToEOL state (i.e. all input until the next EOL is ignored).
 //
 func (l *Lexer) emitErrorAtPos(pos Pos, format string, args ...interface{}) stateFn {
-	lm := &Lexeme{
+	i := &Item{
 		Token: token.Error,
 		Pos:   pos, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	}
-	if l.emitLexeme(lm) {
+	if l.emitLexeme(i) {
 		return skipToEOL
 	}
 	return nil
