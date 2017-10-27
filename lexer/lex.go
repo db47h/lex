@@ -1,6 +1,6 @@
 // Package lexer implements a lexer for assembler source text.
 //
-// This is a concurrent lexer loosely based on Ivy (https://github.com/robpike/ivy).
+// This is a concurrent similar to https://golang.org/src/text/template/parse/lex.go.
 //
 // Despite its concurrent architecture, it essentially behaves as any other
 // lexer from an API standpoint.
@@ -66,7 +66,7 @@ type Lexer struct {
 	done chan struct{}
 }
 
-type scanState func(l *Lexer) scanState
+type stateFn func(l *Lexer) stateFn
 
 // New creates a new lexer associated with the given source byte slice.
 //
@@ -85,13 +85,14 @@ func New(b []byte) *Lexer {
 		c:    make(chan *Lexeme),
 		done: make(chan struct{}),
 	}
-	go func() {
-		state := scanAny
-		for state != nil {
-			state = state(l)
-		}
-	}()
+	go l.run()
 	return l
+}
+
+func (l *Lexer) run() {
+	for state := lexAny; state != nil; state = state(l) {
+	}
+	close(l.c)
 }
 
 // Lex reads source text and returns the next lexeme until EOF. Once this
@@ -123,13 +124,13 @@ func (l *Lexer) Close() {
 // emit emits a single token. Returns the next state depending
 // on the success of the operation.
 //
-func (l *Lexer) emit(t token.Token, value interface{}) scanState {
+func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
 	if l.emitLexeme(&Lexeme{
 		Token: t,
 		Pos:   l.s,
 		Value: value,
 	}) {
-		return scanAny
+		return lexAny
 	}
 	return nil
 }
@@ -146,10 +147,8 @@ func (l *Lexer) emitLexeme(lm *Lexeme) bool {
 			if lm.Token != token.EOF {
 				return true
 			}
-			close(l.c)
 			return false
 		case <-l.done:
-			close(l.c) // undefined behavior if calling Lex after this
 			return false
 		}
 	}
@@ -158,7 +157,7 @@ func (l *Lexer) emitLexeme(lm *Lexeme) bool {
 // errorf emits an error assuming the general case that the
 // error occurred at s.u. See emitErrorAtPos.
 //
-func (l *Lexer) errorf(format string, args ...interface{}) scanState {
+func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
 	return l.emitErrorAtPos(l.u, format, args...)
 }
 
@@ -166,7 +165,7 @@ func (l *Lexer) errorf(format string, args ...interface{}) scanState {
 // Lexeme is set to a string representation of the error. Places the lexer
 //  in skipToEOL state (i.e. all input until the next EOL is ignored).
 //
-func (l *Lexer) emitErrorAtPos(pos Pos, format string, args ...interface{}) scanState {
+func (l *Lexer) emitErrorAtPos(pos Pos, format string, args ...interface{}) stateFn {
 	lm := &Lexeme{
 		Token: token.Error,
 		Pos:   pos, // that's where the error actually occurred
@@ -205,7 +204,7 @@ func (l *Lexer) tokenString() string {
 	return ""
 }
 
-func scanAny(l *Lexer) scanState {
+func lexAny(l *Lexer) stateFn {
 	r := l.next()
 	switch r {
 	case eof:
@@ -243,22 +242,22 @@ func scanAny(l *Lexer) scanState {
 	case '^':
 		return l.emit(token.OpXor, nil)
 	case ';':
-		return scanComment
+		return lexComment
 	case '.': // not necessarily a word separator
 		return l.emit(token.Dot, nil)
 	}
 
 	switch {
 	case unicode.IsSpace(r):
-		return scanSpace
+		return lexSpace
 	case r >= '0' && r <= '9':
 		if r != '0' {
 			l.undo() // let scanInt read the whole number
-			return scanIntDigits(10)
+			return lexIntDigits(10)
 		}
-		return scanIntBase
+		return lexIntBase
 	case unicode.IsLetter(r) || r == '_':
-		return scanIdentifier
+		return lexIdentifier
 	}
 	return l.errorf("illegal symbol %s", strconv.QuoteRune(r))
 }
@@ -278,7 +277,7 @@ func isWordSeparator(r rune) bool {
 	}
 }
 
-func scanSpace(l *Lexer) scanState {
+func lexSpace(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if r != eof && unicode.IsSpace(r) && r != '\n' {
@@ -290,7 +289,7 @@ func scanSpace(l *Lexer) scanState {
 	}
 }
 
-func scanComment(l *Lexer) scanState {
+func lexComment(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if r == eof || r == '\n' {
@@ -300,27 +299,27 @@ func scanComment(l *Lexer) scanState {
 	}
 }
 
-// scanIntBase reads the character foillowing a leading 0 in order to determine
+// lexIntBase reads the character foillowing a leading 0 in order to determine
 // the number base or directly emit a 0 literal or local label.
 //
 // Supported number bases are 2, 8, 10 and 16.
 //
 // Special case: a leading 0 followed by 'b' or 'f' is a local label.
 //
-func scanIntBase(l *Lexer) scanState {
+func lexIntBase(l *Lexer) stateFn {
 	r := l.next()
 	switch {
 	case r >= '0' && r <= '9':
 		// undo in order to let scanIntDigits read the whole number
 		// (except the leading 0) or error appropriately if r is >= 8
 		l.undo()
-		return scanIntDigits(8)
+		return lexIntDigits(8)
 	case r == 'x' || r == 'X':
-		return scanIntDigits(16)
+		return lexIntDigits(16)
 	case r == 'b': // possible LocalLabel caught in scanIntDigits
-		return scanIntDigits(2)
+		return lexIntDigits(2)
 	case r == 'f':
-		return scanLocalLabel
+		return lexLocalLabel
 	case isWordSeparator(r):
 		l.undo()
 		return l.emit(token.Immediate, &big.Int{})
@@ -329,12 +328,12 @@ func scanIntBase(l *Lexer) scanState {
 	}
 }
 
-// scanIntDigits scans the 2nd to n digit of an int in the given base.
+// lexIntDigits scans the 2nd to n digit of an int in the given base.
 //
 // Supported bases are 2, 8, 10 and 16.
 //
-func scanIntDigits(base int32) scanState {
-	return func(l *Lexer) scanState {
+func lexIntDigits(base int32) stateFn {
+	return func(l *Lexer) stateFn {
 		v := &big.Int{}
 		var t big.Int
 		for {
@@ -356,7 +355,7 @@ func scanIntDigits(base int32) scanState {
 				continue
 			}
 			if base == 10 && r == 'b' || r == 'f' {
-				return scanLocalLabel
+				return lexLocalLabel
 			}
 			return l.errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base)
 		}
@@ -369,7 +368,7 @@ func scanIntDigits(base int32) scanState {
 //
 // There's a special case with "0b" that will be sent as LocalLabel "0b".
 //
-func emitInt(l *Lexer, base int32, value *big.Int) scanState {
+func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
 	// len is at least one. Base 16 needs at least 3 bytes.
 	if base == 16 && l.n.Offset-l.s.Offset < 3 {
 		return l.emitErrorAtPos(l.s, "malformed immediate value %q", l.b[l.s.Offset:l.n.Offset])
@@ -380,13 +379,13 @@ func emitInt(l *Lexer, base int32, value *big.Int) scanState {
 	return l.emit(token.Immediate, value)
 }
 
-// scanIdentifier scans an identifier starting with _ or a unicode letter
+// lexIdentifier scans an identifier starting with _ or a unicode letter
 // followed by any combination of printable unicode characters that are not
 // word separators (operators, brackets, backslash, ',', ';', ':'). This
 // includes letters, marks, numbers, punctuation, symbols, from categories L, M,
 // N, P, S.
 //
-func scanIdentifier(l *Lexer) scanState {
+func lexIdentifier(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if isWordSeparator(r) {
@@ -402,22 +401,22 @@ func scanIdentifier(l *Lexer) scanState {
 // skipToEOL silently eats everything until next EOL
 // and keep that EOL for the next next()
 //
-func skipToEOL(l *Lexer) scanState {
+func skipToEOL(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if r == eof || r == '\n' {
 			l.undo()
 			// reset start for '\n' or EOF
 			l.s = l.n
-			return scanAny
+			return lexAny
 		}
 	}
 }
 
-// scanLocalLabel scans the character following the final 'b' or 'f'
+// lexLocalLabel scans the character following the final 'b' or 'f'
 // and makes sure it's a word separator
 //
-func scanLocalLabel(l *Lexer) scanState {
+func lexLocalLabel(l *Lexer) stateFn {
 	r := l.next()
 	if isWordSeparator(r) {
 		l.undo()
