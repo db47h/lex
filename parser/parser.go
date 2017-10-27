@@ -21,10 +21,10 @@ func tokString(l *lexer.Lexeme) string {
 		String() string
 	}:
 		return v.String()
-	case error:
-		return v.Error()
-	default:
+	case nil:
 		return l.Token.String()
+	default:
+		panic(fmt.Errorf("unhandled token value type %T for %v", v, v))
 	}
 }
 

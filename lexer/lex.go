@@ -9,7 +9,6 @@ package lexer
 
 import (
 	"fmt"
-	"io"
 	"math/big"
 	"strconv"
 	"unicode"
@@ -17,6 +16,8 @@ import (
 
 	"github.com/db47h/asm/token"
 )
+
+const eof = -1
 
 // Pos represents a token's position.
 //
@@ -42,20 +43,15 @@ type Lexeme struct {
 // the output format is not guaranteed to be stable.
 //
 func (l *Lexeme) String() string {
-	switch l.Token {
-	case token.Error:
-		return fmt.Sprintf("%d:%d: %s \"%s\"", l.Pos.Line, l.Pos.Column, l.Token, l.Value)
+	switch v := l.Value.(type) {
+	case string:
+		return fmt.Sprintf("%d:%d: %s %s", l.Pos.Line, l.Pos.Column, l.Token, v)
+	case interface {
+		String() string
+	}:
+		return fmt.Sprintf("%d:%d: %s %s", l.Pos.Line, l.Pos.Column, l.Token, v.String())
 	default:
-		switch v := l.Value.(type) {
-		case string:
-			return fmt.Sprintf("%d:%d: %s %q", l.Pos.Line, l.Pos.Column, l.Token, v)
-		case interface {
-			String() string
-		}:
-			return fmt.Sprintf("%d:%d: %s %q", l.Pos.Line, l.Pos.Column, l.Token, v.String())
-		default:
-			return fmt.Sprintf("%d:%d: %s", l.Pos.Line, l.Pos.Column, l.Token)
-		}
+		return fmt.Sprintf("%d:%d: %s", l.Pos.Line, l.Pos.Column, l.Token)
 	}
 }
 
@@ -159,31 +155,22 @@ func (l *Lexer) emitLexeme(lm *Lexeme) bool {
 	}
 }
 
-// emitError emits an error assuming the general case that the
+// errorf emits an error assuming the general case that the
 // error occurred at s.u. See emitErrorAtPos.
 //
-func (l *Lexer) emitError(err error) scanState {
-	return l.emitErrorAtPos(err, l.u)
-}
-
-// emitErrorOrToken emits an error or the given token if the error is nil or EOF.
-//
-func (l *Lexer) emitErrorOrToken(err error, t token.Token, value interface{}) scanState {
-	if err == nil || err == io.EOF {
-		return l.emit(t, value)
-	}
-	return l.emitError(err)
+func (l *Lexer) errorf(format string, args ...interface{}) scanState {
+	return l.emitErrorAtPos(l.u, format, args...)
 }
 
 // emitErrorAtPos emits an error Token at the given pos. The value of the
-// Lexeme is set to the error. Places the lexer in skipToEOL state (i.e. all
-// input until the next EOL is ignored).
+// Lexeme is set to a string representation of the error. Places the lexer
+//  in skipToEOL state (i.e. all input until the next EOL is ignored).
 //
-func (l *Lexer) emitErrorAtPos(err error, pos Pos) scanState {
+func (l *Lexer) emitErrorAtPos(pos Pos, format string, args ...interface{}) scanState {
 	lm := &Lexeme{
 		Token: token.Error,
 		Pos:   pos, // that's where the error actually occurred
-		Value: err,
+		Value: fmt.Sprintf(format, args...),
 	}
 	if l.emitLexeme(lm) {
 		return skipToEOL
@@ -191,15 +178,11 @@ func (l *Lexer) emitErrorAtPos(err error, pos Pos) scanState {
 	return nil
 }
 
-func (l *Lexer) next() (rune, error) {
+func (l *Lexer) next() rune {
 	l.u = l.n
 	r, sz := utf8.DecodeRune(l.b[l.n.Offset:])
-	if r == utf8.RuneError {
-		if sz == 0 {
-			return r, io.EOF
-		}
-		l.n.Offset += sz
-		return r, fmt.Errorf("invalid rune \\x%02X", l.b[l.n.Offset-sz:l.n.Offset])
+	if sz == 0 {
+		return eof
 	}
 	l.n.Offset += sz
 	if r == '\n' {
@@ -208,7 +191,7 @@ func (l *Lexer) next() (rune, error) {
 	} else {
 		l.n.Column++
 	}
-	return r, nil
+	return r
 }
 
 func (l *Lexer) undo() {
@@ -223,11 +206,10 @@ func (l *Lexer) tokenString() string {
 }
 
 func scanAny(l *Lexer) scanState {
-	r, err := l.next()
-	if err != nil {
-		return l.emitErrorOrToken(err, token.EOF, nil)
-	}
+	r := l.next()
 	switch r {
+	case eof:
+		return l.emit(token.EOF, nil)
 	case '\n':
 		return l.emit(token.EOL, nil)
 	case '(':
@@ -278,7 +260,7 @@ func scanAny(l *Lexer) scanState {
 	case unicode.IsLetter(r) || r == '_':
 		return scanIdentifier
 	}
-	return l.emitError(fmt.Errorf("illegal symbol %s", strconv.QuoteRune(r)))
+	return l.errorf("illegal symbol %s", strconv.QuoteRune(r))
 }
 
 func isWordSeparator(r rune) bool {
@@ -289,6 +271,8 @@ func isWordSeparator(r rune) bool {
 		return true
 	case ':': // TODO: allowed inside symbols on some platforms
 		return true
+	case eof:
+		return true
 	default:
 		return unicode.IsSpace(r)
 	}
@@ -296,11 +280,8 @@ func isWordSeparator(r rune) bool {
 
 func scanSpace(l *Lexer) scanState {
 	for {
-		r, err := l.next()
-		if err != nil {
-			return l.emitErrorOrToken(err, token.Space, nil)
-		}
-		if unicode.IsSpace(r) && r != '\n' {
+		r := l.next()
+		if r != eof && unicode.IsSpace(r) && r != '\n' {
 			continue
 		}
 		// revert last rune read
@@ -311,11 +292,8 @@ func scanSpace(l *Lexer) scanState {
 
 func scanComment(l *Lexer) scanState {
 	for {
-		r, err := l.next()
-		if err != nil {
-			return l.emitErrorOrToken(err, token.Comment, l.tokenString())
-		}
-		if r == '\n' {
+		r := l.next()
+		if r == eof || r == '\n' {
 			l.undo()
 			return l.emit(token.Comment, l.tokenString())
 		}
@@ -330,10 +308,7 @@ func scanComment(l *Lexer) scanState {
 // Special case: a leading 0 followed by 'b' or 'f' is a local label.
 //
 func scanIntBase(l *Lexer) scanState {
-	r, err := l.next()
-	if err != nil {
-		l.emitErrorOrToken(err, token.Immediate, &big.Int{})
-	}
+	r := l.next()
 	switch {
 	case r >= '0' && r <= '9':
 		// undo in order to let scanIntDigits read the whole number
@@ -350,7 +325,7 @@ func scanIntBase(l *Lexer) scanState {
 		l.undo()
 		return l.emit(token.Immediate, &big.Int{})
 	default:
-		return l.emitError(fmt.Errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r)))
+		return l.errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r))
 	}
 }
 
@@ -363,12 +338,10 @@ func scanIntDigits(base int32) scanState {
 		v := &big.Int{}
 		var t big.Int
 		for {
-			r, err := l.next()
-			if err != nil {
-				if err == io.EOF {
-					return emitInt(l, base, v)
-				}
-				return l.emitError(err)
+			r := l.next()
+			if isWordSeparator(r) {
+				l.undo()
+				return emitInt(l, base, v)
 			}
 			rl := unicode.ToLower(r)
 			if rl >= 'a' {
@@ -385,11 +358,7 @@ func scanIntDigits(base int32) scanState {
 			if base == 10 && r == 'b' || r == 'f' {
 				return scanLocalLabel
 			}
-			if isWordSeparator(r) {
-				l.undo()
-				return emitInt(l, base, v)
-			}
-			return l.emitError(fmt.Errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base))
+			return l.errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base)
 		}
 	}
 }
@@ -403,7 +372,7 @@ func scanIntDigits(base int32) scanState {
 func emitInt(l *Lexer, base int32, value *big.Int) scanState {
 	// len is at least one. Base 16 needs at least 3 bytes.
 	if base == 16 && l.n.Offset-l.s.Offset < 3 {
-		return l.emitErrorAtPos(fmt.Errorf("malformed immediate value %q", l.b[l.s.Offset:l.n.Offset]), l.s)
+		return l.emitErrorAtPos(l.s, "malformed immediate value %q", l.b[l.s.Offset:l.n.Offset])
 	} else if base == 2 && l.n.Offset-l.s.Offset == 2 && l.b[l.s.Offset+1] == 'b' {
 		// the "0f" case has been filtered out in scanIntBase
 		return l.emit(token.LocalLabel, l.tokenString())
@@ -419,16 +388,13 @@ func emitInt(l *Lexer, base int32, value *big.Int) scanState {
 //
 func scanIdentifier(l *Lexer) scanState {
 	for {
-		r, err := l.next()
-		if err != nil {
-			return l.emitErrorOrToken(err, token.Identifier, l.tokenString())
-		}
+		r := l.next()
 		if isWordSeparator(r) {
 			l.undo()
 			return l.emit(token.Identifier, l.tokenString())
 		}
 		if !unicode.IsPrint(r) {
-			return l.emitError(fmt.Errorf("illegal symbol in identifier %s", strconv.QuoteRune(r)))
+			return l.errorf("illegal symbol in identifier %s", strconv.QuoteRune(r))
 		}
 	}
 }
@@ -438,16 +404,10 @@ func scanIdentifier(l *Lexer) scanState {
 //
 func skipToEOL(l *Lexer) scanState {
 	for {
-		r, err := l.next()
-		// ignore all errors but EOF
-		if err == io.EOF {
-			// place EOF in the correct position
-			l.s = l.n
-			return l.emit(token.EOF, nil)
-		}
-		if r == '\n' { // err == nil implied
+		r := l.next()
+		if r == eof || r == '\n' {
 			l.undo()
-			// reset start for '\n'
+			// reset start for '\n' or EOF
 			l.s = l.n
 			return scanAny
 		}
@@ -458,13 +418,10 @@ func skipToEOL(l *Lexer) scanState {
 // and makes sure it's a word separator
 //
 func scanLocalLabel(l *Lexer) scanState {
-	r, err := l.next()
-	if err != nil {
-		return l.emitErrorOrToken(err, token.LocalLabel, l.tokenString())
-	}
+	r := l.next()
 	if isWordSeparator(r) {
 		l.undo()
 		return l.emit(token.LocalLabel, l.tokenString())
 	}
-	return l.emitError(fmt.Errorf("malformed local label or immediate value: illegal symbol %s", strconv.QuoteRune(r)))
+	return l.errorf("malformed local label or immediate value: illegal symbol %s", strconv.QuoteRune(r))
 }

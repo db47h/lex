@@ -43,7 +43,4 @@ strcmp:
 			break
 		}
 	}
-	// Output:
-	// This example delibeartely fails until all necessary
-	// features are included
 }

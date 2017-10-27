@@ -14,7 +14,7 @@ type Token uint
 const (
 	EOF          Token = iota // end of file
 	EOL                       // end of line
-	Error                     // error
+	Error                     // error -- the associated value is a string
 	LeftParen                 // (
 	RightParen                // )
 	LeftBracket               // [
@@ -22,7 +22,7 @@ const (
 	Colon                     // :
 	Comma                     // ,
 	Space                     //
-	Comment                   // ; - and skip to EOL
+	Comment                   // ; -- and skip to EOL
 	Dot                       // '.'
 	Identifier                // any valid identifier
 	Immediate                 // immediate
