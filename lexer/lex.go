@@ -264,7 +264,8 @@ func lexAny(l *Lexer) stateFn {
 
 func isWordSeparator(r rune) bool {
 	// This needs updating if we add symbols to the syntax
-	// these are valid characters immediately following (and marking the end of) a number
+	// these are valid characters immediately following (and marking the end of)
+	// any token.
 	switch r {
 	case '(', ')', '[', ']', '\\', ',', ';', '+', '-', '*', '/', '%', '&', '|', '^':
 		return true
@@ -414,7 +415,7 @@ func skipToEOL(l *Lexer) stateFn {
 }
 
 // lexLocalLabel scans the character following the final 'b' or 'f'
-// and makes sure it's a word separator
+// and makes sure it's a word separator.
 //
 func lexLocalLabel(l *Lexer) stateFn {
 	r := l.next()
