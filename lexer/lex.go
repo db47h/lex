@@ -1,6 +1,6 @@
 // Package lexer implements a lexer for assembler source text.
 //
-// This is a concurrent similar to https://golang.org/src/text/template/parse/lex.go.
+// This is a concurrent lexer, similar to https://golang.org/src/text/template/parse/lex.go.
 //
 // Despite its concurrent architecture, it essentially behaves as any other
 // lexer from an API standpoint.
@@ -50,7 +50,7 @@ type Lexer struct {
 	err  func(error)
 	t    []rune    // token string buffer
 	s    token.Pos // current token start pos
-	n    token.Pos // position of next rune to read
+	p    token.Pos // position of last rune read
 	r    rune      // last rune read
 	u    bool      // undo
 	c    chan *Item
@@ -68,6 +68,7 @@ func New(f *token.File, errorHandler func(err error)) *Lexer {
 	l := &Lexer{
 		f:    f,
 		c:    make(chan *Item),
+		p:    -1,
 		done: make(chan struct{}),
 		err:  errorHandler,
 	}
@@ -98,7 +99,7 @@ func (l *Lexer) Lex() *Item {
 		// l.c has been closed
 		return &Item{
 			Token: token.EOF,
-			Pos:   l.s,
+			Pos:   l.p,
 			Value: nil,
 		}
 	}
@@ -142,16 +143,18 @@ func (l *Lexer) emitItem(i *Item) bool {
 	for {
 		select {
 		case l.c <- i:
-			if l.u {
-				l.t = l.t[len(l.t)-1:]
-			} else {
-				l.t = l.t[:0]
-			}
-			if i.Token == token.EOF {
-				return false
-			}
 			l.s = l.nextPos()
-			return true
+			// Reuse the l.t slice and re-append l.r if need be.
+			// We could end up with a large-ish slice hanging around (i.e. as
+			// big as the largest lexed token), but this limits garbage collection.
+			l.t = l.t[:0]
+			if l.u {
+				l.t = append(l.t, l.r)
+			}
+			if i.Token != token.EOF {
+				return true
+			}
+			return false
 		case <-l.done:
 			return false
 		}
@@ -187,27 +190,30 @@ func (l *Lexer) next() rune {
 		r = eof
 		defer l.err(err)
 	}
+	l.p++
 	if l.r == '\n' {
-		l.f.AddLine(l.n)
+		l.f.AddLine(l.p)
 	}
-	l.n++
 	l.r = r
 	l.t = append(l.t, r)
 	return r
 }
 
+// undo undoes the last call to next(). Calling this function twice
+// in a raw or without calling next() first will cause a panic.
+//
 func (l *Lexer) undo() {
-	if l.u {
-		panic("impossible to undo")
+	if l.u || !l.p.IsValid() {
+		panic("invalid use of undo")
 	}
 	l.u = true
 }
 
 func (l *Lexer) nextPos() token.Pos {
 	if l.u {
-		return l.n - 1
+		return l.p
 	}
-	return l.n
+	return l.p + 1
 }
 
 func (l *Lexer) tokenString() string {
