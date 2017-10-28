@@ -9,84 +9,78 @@ package lexer
 
 import (
 	"fmt"
+	"io"
 	"math/big"
 	"strconv"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/db47h/asm/token"
 )
 
 const eof = -1
 
-// Pos represents a token's position.
-//
-type Pos struct {
-	Offset int // starts at 0
-	Line   int // starts at 1
-	Column int // starts at 1
-}
-
-func (p *Pos) String() string {
-	return fmt.Sprintf("%d:%d", p.Line, p.Column)
-}
-
 // Item represents a token returned from the lexer.
 //
 type Item struct {
 	token.Token
-	Pos   // Start position
-	Value interface{}
+	token.Pos // Token start position within the file.
+	Value     interface{}
 }
 
-// String returns a string representation of the lexeme. This should be used only for debugging purposes as
+// String returns a string representation of the item. This should be used only for debugging purposes as
 // the output format is not guaranteed to be stable.
 //
 func (i *Item) String() string {
 	switch v := i.Value.(type) {
 	case string:
-		return fmt.Sprintf("%d:%d: %s %s", i.Pos.Line, i.Pos.Column, i.Token, v)
+		return fmt.Sprintf("%s %s", i.Token, v)
 	case interface {
 		String() string
 	}:
-		return fmt.Sprintf("%d:%d: %s %s", i.Pos.Line, i.Pos.Column, i.Token, v.String())
+		return fmt.Sprintf("%s %s", i.Token, v.String())
 	default:
-		return fmt.Sprintf("%d:%d: %s", i.Pos.Line, i.Pos.Column, i.Token)
+		return i.Token.String()
 	}
 }
 
 // A Lexer holds the internal state of the lexer while processing a given text.
 //
 type Lexer struct {
-	b    []byte
-	s    Pos // token start pos
-	n    Pos // next rune to read by next()
-	u    Pos // saved position to undo last call to next()
+	f    *token.File
+	err  func(error)
+	t    []rune    // token string buffer
+	s    token.Pos // current token start pos
+	n    token.Pos // position of next rune to read
+	r    rune      // last rune read
+	u    bool      // undo
 	c    chan *Item
 	done chan struct{}
 }
 
 type stateFn func(l *Lexer) stateFn
 
-// New creates a new lexer associated with the given source byte slice.
+// New creates a new lexer associated with the given source file.
+// The provided error handler is called whenever an io error (other than
+// io.EOF) occurs during lexing. If errorHandler is nil, the lexer will panic
+// on io errors.
 //
-func New(b []byte) *Lexer {
+func New(f *token.File, errorHandler func(err error)) *Lexer {
 	l := &Lexer{
-		b: b,
-		s: Pos{
-			Line:   1,
-			Column: 1,
-		},
-		n: Pos{
-			Line:   1,
-			Column: 1,
-		},
-		u:    Pos{Line: 0, Column: 0},
+		f:    f,
 		c:    make(chan *Item),
 		done: make(chan struct{}),
+		err:  errorHandler,
+	}
+	if errorHandler == nil {
+		l.err = l.defaultErrorHandler
 	}
 	go l.run()
 	return l
+}
+
+func (l *Lexer) defaultErrorHandler(err error) {
+	line, col := l.f.Position(l.nextPos() - 1)
+	panic(fmt.Errorf("%s:%d:%d io error \"%s\"", l.f.Name(), line, col, err))
 }
 
 func (l *Lexer) run() {
@@ -95,7 +89,7 @@ func (l *Lexer) run() {
 	close(l.c)
 }
 
-// Lex reads source text and returns the next lexeme until EOF. Once this
+// Lex reads source text and returns the next item until EOF. Once this
 // function has returned an EOF token, any further calls to it will panic.
 //
 func (l *Lexer) Lex() *Item {
@@ -120,11 +114,17 @@ func (l *Lexer) Close() {
 	}
 }
 
+// File returns the token.File used as input for the lexer.
+//
+func (l *Lexer) File() *token.File {
+	return l.f
+}
+
 // emit emits a single token. Returns the next state depending
 // on the success of the operation.
 //
 func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
-	if l.emitLexeme(&Item{
+	if l.emitItem(&Item{
 		Token: t,
 		Pos:   l.s,
 		Value: value,
@@ -134,73 +134,84 @@ func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
 	return nil
 }
 
-// emitLexeme emits the given lexeme. Returns false if the lexer has been aborted
-// or the last token is EOF. If false is returned, the caller (usually a scanState)
+// emitItem emits the given item. Returns false if the lexer has been aborted
+// or the last token is EOF. If false is returned, the caller (usually a stateFn)
 // should return nil to abort the lexer's loop.
 //
-func (l *Lexer) emitLexeme(i *Item) bool {
+func (l *Lexer) emitItem(i *Item) bool {
 	for {
 		select {
 		case l.c <- i:
-			l.s = l.n
-			if i.Token != token.EOF {
-				return true
+			if l.u {
+				l.t = l.t[len(l.t)-1:]
+			} else {
+				l.t = l.t[:0]
 			}
-			return false
+			if i.Token == token.EOF {
+				return false
+			}
+			l.s = l.nextPos()
+			return true
 		case <-l.done:
 			return false
 		}
 	}
 }
 
-// errorf emits an error assuming the general case that the
-// error occurred at s.u. See emitErrorAtPos.
+// errorf emits an error token. The Item value is set to a string
+// representation of the error. Places the lexer in skipToEOL state (i.e. all
+// input until the next EOL is ignored).
 //
 func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
-	return l.emitErrorAtPos(l.u, format, args...)
-}
-
-// emitErrorAtPos emits an error Token at the given pos. The value of the
-// Lexeme is set to a string representation of the error. Places the lexer
-//  in skipToEOL state (i.e. all input until the next EOL is ignored).
-//
-func (l *Lexer) emitErrorAtPos(pos Pos, format string, args ...interface{}) stateFn {
 	i := &Item{
 		Token: token.Error,
-		Pos:   pos, // that's where the error actually occurred
+		Pos:   l.nextPos() - 1, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	}
-	if l.emitLexeme(i) {
+	if l.emitItem(i) {
 		return skipToEOL
 	}
 	return nil
 }
 
 func (l *Lexer) next() rune {
-	l.u = l.n
-	r, sz := utf8.DecodeRune(l.b[l.n.Offset:])
-	if sz == 0 {
-		return eof
+	if l.u {
+		l.u = false
+		return l.r
 	}
-	l.n.Offset += sz
-	if r == '\n' {
-		l.n.Line++
-		l.n.Column = 1
-	} else {
-		l.n.Column++
+	r, s, err := l.f.ReadRune()
+	switch {
+	case s == 0 || err == io.EOF:
+		r = eof
+	case err != nil:
+		r = eof
+		defer l.err(err)
 	}
+	if l.r == '\n' {
+		l.f.AddLine(l.n)
+	}
+	l.n++
+	l.r = r
+	l.t = append(l.t, r)
 	return r
 }
 
 func (l *Lexer) undo() {
-	l.n = l.u
+	if l.u {
+		panic("impossible to undo")
+	}
+	l.u = true
+}
+
+func (l *Lexer) nextPos() token.Pos {
+	if l.u {
+		return l.n - 1
+	}
+	return l.n
 }
 
 func (l *Lexer) tokenString() string {
-	if l.s.Offset < l.n.Offset {
-		return string(l.b[l.s.Offset:l.n.Offset])
-	}
-	return ""
+	return string(l.t[:l.nextPos()-l.s])
 }
 
 func lexAny(l *Lexer) stateFn {
@@ -369,11 +380,13 @@ func lexIntDigits(base int32) stateFn {
 // There's a special case with "0b" that will be sent as LocalLabel "0b".
 //
 func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
-	// len is at least one. Base 16 needs at least 3 bytes.
-	if base == 16 && l.n.Offset-l.s.Offset < 3 {
-		return l.emitErrorAtPos(l.s, "malformed immediate value %q", l.b[l.s.Offset:l.n.Offset])
-	} else if base == 2 && l.n.Offset-l.s.Offset == 2 && l.b[l.s.Offset+1] == 'b' {
-		// the "0f" case has been filtered out in scanIntBase
+	// len is at least 2 for bases 2 and 16. i.e. we've read at least
+	// "0b" or "0x").
+	sz := l.nextPos() - l.s
+	if base == 16 && sz < 3 {
+		return l.errorf("malformed immediate value \"%s\"", l.tokenString())
+	} else if base == 2 && sz == 2 {
+		// "0b" exactly; the "0f" case has been filtered out in scanIntBase.
 		return l.emit(token.LocalLabel, l.tokenString())
 	}
 	return l.emit(token.Immediate, value)
@@ -407,7 +420,7 @@ func skipToEOL(l *Lexer) stateFn {
 		if r == eof || r == '\n' {
 			l.undo()
 			// reset start for '\n' or EOF
-			l.s = l.n
+			l.s = l.nextPos()
 			return lexAny
 		}
 	}

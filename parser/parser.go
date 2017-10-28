@@ -148,15 +148,15 @@ func nullLeaf(p *Parser, i *lexer.Item, s *nullOpSpec) (*Node, error) {
 }
 
 type Parser struct {
-	f  string
+	f  *token.File
 	l  *lexer.Lexer
 	n  *lexer.Item
 	lt map[token.Token]leftOpSpec
 	nt map[token.Token]nullOpSpec
 }
 
-func NewParser(f string, l *lexer.Lexer) *Parser {
-	return &Parser{f, l, nil, leftOp, nullOp}
+func NewParser(f *token.File) *Parser {
+	return &Parser{f, lexer.New(f, nil), nil, leftOp, nullOp}
 }
 
 // ParseExpr parses expressions using a precedence climbing algorithm.
@@ -197,10 +197,12 @@ func (p *Parser) expectEndOfExpr() error {
 		return nil
 	case token.Error:
 		p.skipToEOL()
-		return fmt.Errorf("%s:%s: %s", p.f, i.Pos.String(), i.String())
+		l, c := p.l.File().Position(i.Pos)
+		return fmt.Errorf("%s:%d:%d: %s", p.f.Name(), l, c, i.String())
 	default:
 		p.skipToEOL()
-		return fmt.Errorf("%s:%s: unexpected token %s at end", p.f, i.Pos.String(), i.String())
+		l, c := p.l.File().Position(i.Pos)
+		return fmt.Errorf("%s:%d:%d: unexpected token %s at end", p.f.Name(), l, c, i.String())
 	}
 }
 

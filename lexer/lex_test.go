@@ -1,11 +1,18 @@
 package lexer_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
 )
+
+func tokenString(f *token.File, i *lexer.Item) string {
+	line, col := f.Position(i.Pos)
+	return fmt.Sprintf("%d:%d: %s", line, col, i.String())
+}
 
 func TestLexer_Lex(t *testing.T) {
 	tests := []struct {
@@ -35,7 +42,7 @@ func TestLexer_Lex(t *testing.T) {
 			"3:2: Error illegal symbol 'a' in base 10 immediate value", "3:3: EOF",
 		}},
 		{"immediate16", "0x\n0x24(r0)", []string{
-			"1:1: Error malformed immediate value \"0x\"", "1:3: EOL",
+			"1:2: Error malformed immediate value \"0x\"", "1:3: EOL",
 			"2:1: Immediate 36", "2:5: LeftParen",
 		}},
 		{"immediate2_LocalLabel", "0:\nlui zero 0b11\nj 0b\nj 0f", []string{
@@ -48,10 +55,11 @@ func TestLexer_Lex(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var i int
-			l := lexer.New([]byte(tt.input))
+			f := token.NewFile("", strings.NewReader(tt.input))
+			l := lexer.New(f, nil)
 			for i = 0; i < len(tt.want); i++ {
 				lx := l.Lex()
-				if lx.String() != tt.want[i] {
+				if tokenString(l.File(), lx) != tt.want[i] {
 					t.Errorf("Got:\n\t%s\nWant:\n\t%s", lx.String(), tt.want[i])
 				}
 				if lx.Token == token.EOF {
@@ -65,4 +73,21 @@ func TestLexer_Lex(t *testing.T) {
 			l.Close()
 		})
 	}
+}
+
+func ExampleLexer_Lex() {
+	input := "DéjàVu:\n"
+	f := token.NewFile("test_eof", strings.NewReader(input))
+	l := lexer.New(f, nil)
+	for n := 0; n < 5; n++ {
+		i := l.Lex()
+		line, col := l.File().Position(i.Pos)
+		fmt.Println(line, col, i.String())
+	}
+	// Output:
+	// 1 1 Identifier DéjàVu
+	// 1 7 Colon
+	// 1 8 EOL
+	// 2 1 EOF
+	// 2 1 EOF
 }

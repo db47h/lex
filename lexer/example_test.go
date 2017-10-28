@@ -1,6 +1,7 @@
 package lexer_test
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/db47h/asm/lexer"
@@ -29,7 +30,7 @@ strcmp:
 	jalr zero, ra, 0
 `
 
-	l := lexer.New([]byte(input))
+	l := lexer.New(token.NewFile("", bytes.NewBufferString(input)), nil)
 	defer l.Close()
 
 	for {
