@@ -8,6 +8,34 @@ import (
 	"github.com/db47h/asm/token"
 )
 
+type parseErrorKind int
+
+const (
+	errLexer           parseErrorKind = -1
+	errUnexpectedToken parseErrorKind = iota
+)
+
+// ParseError wraps a parsing error and keeps track of
+// error kind and position.
+//
+type ParseError struct {
+	i *lexer.Item
+	f *token.File
+	k parseErrorKind
+}
+
+// Error implements the error interface
+//
+func (e *ParseError) Error() string {
+	l, c := e.f.Position(e.i.Pos)
+	switch e.k {
+	case errLexer:
+		return fmt.Sprintf("%s:%d:%d %v", e.f.Name(), l, c, e.i.Value)
+	case errUnexpectedToken:
+		return fmt.Sprintf("%s:%d:%d: %s %s", e.f.Name(), l, c, "unexpected token", e.i.String())
+	}
+}
+
 type Node struct {
 	l *lexer.Item
 	c []*Node
@@ -197,12 +225,10 @@ func (p *Parser) expectEndOfExpr() error {
 		return nil
 	case token.Error:
 		p.skipToEOL()
-		l, c := p.l.File().Position(i.Pos)
-		return fmt.Errorf("%s:%d:%d: %s", p.f.Name(), l, c, i.String())
+		return &ParseError{f: p.f, i: i, k: errLexer}
 	default:
 		p.skipToEOL()
-		l, c := p.l.File().Position(i.Pos)
-		return fmt.Errorf("%s:%d:%d: unexpected token %s at end", p.f.Name(), l, c, i.String())
+		return &ParseError{f: p.f, i: i, k: errUnexpectedToken}
 	}
 }
 
@@ -265,7 +291,7 @@ func (p *Parser) parseExpr(pmin int) (*Node, error) {
 	t := p.nextPrimary()
 	s, ok := p.nt[t.Token]
 	if !ok {
-		return nil, fmt.Errorf("unexpected token %s", t)
+		return nil, &ParseError{f: p.f, i: t, k: errUnexpectedToken}
 	}
 	n, err := s.nud(p, t, &s)
 	if err != nil {
