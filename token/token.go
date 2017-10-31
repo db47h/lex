@@ -20,28 +20,26 @@ const (
 	EOF          Token = iota // end of file
 	EOL                       // end of line
 	Error                     // error -- the associated value is a string
+	Identifier                // any valid identifier
+	Immediate                 // immediate
+	Space                     // unicode.IsSpace() == true
+	Comment                   // ; -- and skip to EOL
 	LeftParen                 // (
 	RightParen                // )
 	LeftBracket               // [
 	RightBracket              // ]
 	Colon                     // :
 	Comma                     // ,
-	Space                     //
-	Comment                   // ; -- and skip to EOL
-	Dot                       // '.'
-	Identifier                // any valid identifier
-	Immediate                 // immediate
-	LocalLabel                // local label (1f, 0b, etc.)
+	Dot                       // .
 	Backslash                 // \
 	OpPlus                    // +
 	OpMinus                   // -
 	OpFactor                  // *
 	OpDiv                     // /
 	OpMod                     // %
-	OpXor                     // ^, also used as unary 'not'
+	OpXor                     // ^
 	OpAnd                     // &
 	OpOr                      // |
-	BuiltIn                   // %identifier not identified by the lexer but by the parser
 )
 
 // Pos represents a token's position within a File

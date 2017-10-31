@@ -305,13 +305,9 @@ func lexIntBase(l *Lexer) stateFn {
 		return lexIntDigits(16)
 	case r == 'b': // possible LocalLabel caught in scanIntDigits
 		return lexIntDigits(2)
-	case r == 'f':
-		return lexLocalLabel
-	case l.isSeparator(token.Immediate, r):
+	default:
 		l.undo()
 		return l.emit(token.Immediate, &big.Int{})
-	default:
-		return l.errorf("invalid character %#U in immediate value", r)
 	}
 }
 
@@ -325,10 +321,6 @@ func lexIntDigits(base int32) stateFn {
 		var t big.Int
 		for {
 			r := l.next()
-			if l.isSeparator(token.Immediate, r) {
-				l.undo()
-				return emitInt(l, base, v)
-			}
 			rl := unicode.ToLower(r)
 			if rl >= 'a' {
 				rl -= 'a' - '0' + 10
@@ -341,29 +333,26 @@ func lexIntDigits(base int32) stateFn {
 				v = v.Add(v, &t)
 				continue
 			}
-			if base == 10 && r == 'b' || r == 'f' {
-				return lexLocalLabel
+			if rl >= base && rl <= 9 {
+				return l.errorf("invalid character %#U in base %d immediate value", r, base)
 			}
-			return l.errorf("invalid character %#U in base %d immediate value", r, base)
+			l.undo()
+			return emitInt(l, base, v)
 		}
 	}
 }
 
 // emitInt is the final stage of int lexing for ints with len > 1. It checks if the
 // immediate value is well-formed. (i.e the minimum amount of digits)
-// then emits the appropriate value.
-//
-// There's a special case with "0b" that will be sent as LocalLabel "0b".
+// then emits the appropriate value(s).
 //
 func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
 	// len is at least 2 for bases 2 and 16. i.e. we've read at least
 	// "0b" or "0x").
 	sz := len(l.t)
-	if base == 16 && sz < 3 {
-		return l.errorf("malformed immediate value \"%s\"", l.tokenString())
-	} else if base == 2 && sz == 2 {
-		// "0b" exactly; the "0f" case has been filtered out in scanIntBase.
-		return l.emit(token.LocalLabel, l.tokenString())
+	if (base == 2 || base == 16) && sz < 3 {
+		// undo the trailing 'x' or 'b'
+		l.undo()
 	}
 	return l.emit(token.Immediate, value)
 }
@@ -399,16 +388,4 @@ func skipToEOL(l *Lexer) stateFn {
 			return lexAny
 		}
 	}
-}
-
-// lexLocalLabel scans the character following the final 'b' or 'f'
-// and makes sure it's a word separator.
-//
-func lexLocalLabel(l *Lexer) stateFn {
-	r := l.next()
-	if l.isSeparator(token.LocalLabel, r) {
-		l.undo()
-		return l.emit(token.LocalLabel, l.tokenString())
-	}
-	return l.errorf("malformed local label or immediate value: invalid symbol %#U", r)
 }

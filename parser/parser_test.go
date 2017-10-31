@@ -9,7 +9,7 @@ import (
 )
 
 func TestNewParser(t *testing.T) {
-	exp := "three(5)(7), 12+4, 17+4+3+9"
+	exp := "%lambda"
 	f := token.NewFile("<stdin>", strings.NewReader(exp))
 	p := parser.NewParser(f)
 	n, err := p.ParseExpr()

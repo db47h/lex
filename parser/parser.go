@@ -151,6 +151,17 @@ var prefix = map[token.Token]Null{
 	token.OpPlus:     UnaryOperator(6),
 	token.OpMinus:    UnaryOperator(6),
 	token.OpXor:      UnaryOperator(6),
+	token.OpMod: NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
+		n := p.next()
+		if n.Token != token.Identifier {
+			p.putBack(n)
+			// TODO: the error here is mode complex.
+			// should be something like "malformed built-in".
+			return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
+		}
+		i.Value = "%_" + n.Value.(string)
+		return &Node{l: i, c: nil}, nil
+	}),
 }
 
 type tokenError struct{}
@@ -332,22 +343,6 @@ func (p *Parser) putBack(i *lexer.Item) {
 	p.n = i
 }
 
-// nextPrimary returns the next token where the token is expected to be a primary.
-// Filters special cases like builtins that are composed of two other tokens:
-//
-//		Builtin := '%' Identifier
-//
-func (p *Parser) nextPrimary() *lexer.Item {
-	i := p.nextNonSpace()
-	if i.Token == token.OpMod {
-		if i2, ok := p.expect(token.Identifier); ok {
-			i2.Token = token.BuiltIn
-			return i2
-		}
-	}
-	return i
-}
-
 func (p *Parser) lookupPrefix(t token.Token) Null {
 	pf := p.pre[t]
 	if pf != nil {
@@ -381,7 +376,7 @@ func (p *Parser) lookupPostfix(t token.Token) Left {
 //
 func (p *Parser) parseExpr(rbp int) (*Node, error) {
 	// primary
-	i := p.nextPrimary()
+	i := p.nextNonSpace()
 	pr := p.lookupPrefix(i.Token)
 	n, err := pr.NuD(p, i)
 	if err != nil {
