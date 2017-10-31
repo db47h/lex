@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"strconv"
 	"unicode"
 
 	"github.com/db47h/asm/token"
@@ -46,42 +45,43 @@ func (i *Item) String() string {
 // A Lexer holds the internal state of the lexer while processing a given text.
 //
 type Lexer struct {
-	f    *token.File
-	err  func(error)
-	t    []rune    // token string buffer
-	s    token.Pos // current token start pos
-	p    token.Pos // position of last rune read
-	r    rune      // last rune read
-	u    bool      // undo
-	c    chan *Item
-	done chan struct{}
+	f            *token.File
+	isSeparator  func(token.Token, rune) bool
+	isIdentifier func(rune, bool) bool
+	err          func(*Lexer, error)
+	t            []rune    // token string buffer
+	s            token.Pos // current token start pos
+	p            token.Pos // position of last rune read
+	r            rune      // last rune read
+	u            bool      // undo
+	c            chan *Item
+	done         chan struct{}
 }
 
 type stateFn func(l *Lexer) stateFn
 
 // New creates a new lexer associated with the given source file.
-// The provided error handler is called whenever an io error (other than
-// io.EOF) occurs during lexing. If errorHandler is nil, the lexer will panic
-// on io errors.
 //
-func New(f *token.File, errorHandler func(err error)) *Lexer {
-	l := &Lexer{
-		f:    f,
-		c:    make(chan *Item),
-		p:    -1,
-		done: make(chan struct{}),
-		err:  errorHandler,
+func New(f *token.File, opts ...Option) *Lexer {
+	o := options{
+		isSeparator:  defIsSeparator,
+		isIdentifier: defIsIdentifier,
+		errorHandler: defErrorHandler,
 	}
-	if errorHandler == nil {
-		l.err = l.defaultErrorHandler
+	for _, f := range opts {
+		f(&o)
+	}
+	l := &Lexer{
+		f:            f,
+		c:            make(chan *Item),
+		p:            -1,
+		done:         make(chan struct{}),
+		isSeparator:  o.isSeparator,
+		isIdentifier: o.isIdentifier,
+		err:          o.errorHandler,
 	}
 	go l.run()
 	return l
-}
-
-func (l *Lexer) defaultErrorHandler(err error) {
-	line, col := l.f.Position(l.nextPos() - 1)
-	panic(fmt.Errorf("%s:%d:%d io error \"%s\"", l.f.Name(), line, col, err))
 }
 
 func (l *Lexer) run() {
@@ -144,7 +144,7 @@ func (l *Lexer) emitItem(i *Item) bool {
 		select {
 		case l.c <- i:
 			l.s = l.nextPos()
-			// Reuse the l.t slice and re-append l.r if need be.
+			// Reuse the l.t slice and re-append l.r if needed.
 			// We could end up with a large-ish slice hanging around (i.e. as
 			// big as the largest lexed token), but this limits garbage collection.
 			l.t = l.t[:0]
@@ -188,7 +188,7 @@ func (l *Lexer) next() rune {
 		r = eof
 	case err != nil:
 		r = eof
-		defer l.err(err)
+		defer l.err(l, err)
 	}
 	l.p++
 	if l.r == '\n' {
@@ -235,9 +235,9 @@ func lexAny(l *Lexer) stateFn {
 		return l.emit(token.LeftBracket, nil)
 	case ']':
 		return l.emit(token.RightBracket, nil)
-	case ':': // TODO: allowed inside symbols on some platforms
+	case ':':
 		return l.emit(token.Colon, nil)
-	case '\\': // prefix for macro arguments
+	case '\\':
 		return l.emit(token.Backslash, nil)
 	case ',':
 		return l.emit(token.Comma, nil)
@@ -272,26 +272,10 @@ func lexAny(l *Lexer) stateFn {
 			return lexIntDigits(10)
 		}
 		return lexIntBase
-	case unicode.IsLetter(r) || r == '_':
+	case l.isIdentifier(r, true):
 		return lexIdentifier
 	}
-	return l.errorf("illegal symbol %s", strconv.QuoteRune(r))
-}
-
-func isWordSeparator(r rune) bool {
-	// This needs updating if we add symbols to the syntax
-	// these are valid characters immediately following (and marking the end of)
-	// any token.
-	switch r {
-	case '(', ')', '[', ']', '\\', ',', ';', '+', '-', '*', '/', '%', '&', '|', '^':
-		return true
-	case ':': // TODO: allowed inside symbols on some platforms
-		return true
-	case eof:
-		return true
-	default:
-		return unicode.IsSpace(r)
-	}
+	return l.errorf("invalid character %#U", r)
 }
 
 func lexSpace(l *Lexer) stateFn {
@@ -337,11 +321,11 @@ func lexIntBase(l *Lexer) stateFn {
 		return lexIntDigits(2)
 	case r == 'f':
 		return lexLocalLabel
-	case isWordSeparator(r):
+	case l.isSeparator(token.Immediate, r):
 		l.undo()
 		return l.emit(token.Immediate, &big.Int{})
 	default:
-		return l.errorf("illegal symbol %s in immediate value", strconv.QuoteRune(r))
+		return l.errorf("invalid character %#U in immediate value", r)
 	}
 }
 
@@ -355,7 +339,7 @@ func lexIntDigits(base int32) stateFn {
 		var t big.Int
 		for {
 			r := l.next()
-			if isWordSeparator(r) {
+			if l.isSeparator(token.Immediate, r) {
 				l.undo()
 				return emitInt(l, base, v)
 			}
@@ -374,7 +358,7 @@ func lexIntDigits(base int32) stateFn {
 			if base == 10 && r == 'b' || r == 'f' {
 				return lexLocalLabel
 			}
-			return l.errorf("illegal symbol %s in base %d immediate value", strconv.QuoteRune(r), base)
+			return l.errorf("invalid character %#U in base %d immediate value", r, base)
 		}
 	}
 }
@@ -407,12 +391,12 @@ func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
 func lexIdentifier(l *Lexer) stateFn {
 	for {
 		r := l.next()
-		if isWordSeparator(r) {
+		if l.isSeparator(token.Identifier, r) {
 			l.undo()
 			return l.emit(token.Identifier, l.tokenString())
 		}
-		if !unicode.IsPrint(r) {
-			return l.errorf("illegal symbol in identifier %s", strconv.QuoteRune(r))
+		if !l.isIdentifier(r, false) {
+			return l.errorf("invalid identifier character %#U", r)
 		}
 	}
 }
@@ -437,9 +421,9 @@ func skipToEOL(l *Lexer) stateFn {
 //
 func lexLocalLabel(l *Lexer) stateFn {
 	r := l.next()
-	if isWordSeparator(r) {
+	if l.isSeparator(token.LocalLabel, r) {
 		l.undo()
 		return l.emit(token.LocalLabel, l.tokenString())
 	}
-	return l.errorf("malformed local label or immediate value: illegal symbol %s", strconv.QuoteRune(r))
+	return l.errorf("malformed local label or immediate value: invalid symbol %#U", r)
 }

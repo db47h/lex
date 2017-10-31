@@ -8,11 +8,13 @@ import (
 	"github.com/db47h/asm/token"
 )
 
-type parseErrorKind int
+const maxPrec int = int(^uint(0) >> 1)
+const minPrec int = -maxPrec - 1
 
-const (
-	errLexer           parseErrorKind = -1
-	errUnexpectedToken parseErrorKind = iota
+var (
+	errLexer           = errors.New("lexer error")
+	errUnexpectedToken = errors.New("unexpected token")
+	errUnbalancedParen = errors.New("missing )")
 )
 
 // ParseError wraps a parsing error and keeps track of
@@ -21,18 +23,20 @@ const (
 type ParseError struct {
 	i *lexer.Item
 	f *token.File
-	k parseErrorKind
+	e error
 }
 
 // Error implements the error interface
 //
 func (e *ParseError) Error() string {
 	l, c := e.f.Position(e.i.Pos)
-	switch e.k {
+	switch e.e {
 	case errLexer:
 		return fmt.Sprintf("%s:%d:%d %v", e.f.Name(), l, c, e.i.Value)
 	case errUnexpectedToken:
 		return fmt.Sprintf("%s:%d:%d: %s %s", e.f.Name(), l, c, "unexpected token", e.i.String())
+	default:
+		return fmt.Sprintf("%s:%d:%d %s", e.f.Name(), l, c, e.e)
 	}
 }
 
@@ -72,119 +76,185 @@ func (n *Node) String() string {
 	return s + ")"
 }
 
-type leftOpSpec struct {
-	prec int
-	led  func(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error)
-	ra   bool
+// A Null is any language entity that preceedes its argument(s) or that has
+// no arguments.
+//
+type Null interface {
+	NuD(p *Parser, i *lexer.Item) (*Node, error) // Null Denotation
 }
 
-var leftOp = map[token.Token]leftOpSpec{
-	token.Comma:     {0, leftChain, false},
-	token.OpOr:      {1, leftBinOp, false},
-	token.OpXor:     {2, leftBinOp, false},
-	token.OpAnd:     {3, leftBinOp, false},
-	token.OpPlus:    {4, leftBinOp, false},
-	token.OpMinus:   {4, leftBinOp, false},
-	token.OpFactor:  {5, leftBinOp, false},
-	token.OpDiv:     {5, leftBinOp, false},
-	token.OpMod:     {5, leftBinOp, false},
-	token.Backslash: {6, leftPostfix, false},
-	token.LeftParen: {6, leftParen, false},
+// A NullFunc is a function implementing the Null interface.
+//
+type NullFunc func(p *Parser, i *lexer.Item) (*Node, error)
+
+// NuD implements the Null interface.
+//
+func (f NullFunc) NuD(p *Parser, i *lexer.Item) (*Node, error) {
+	return f(p, i)
 }
 
-type nullOpSpec struct {
-	prec int
-	nud  func(p *Parser, i *lexer.Item, s *nullOpSpec) (*Node, error)
+// A Left is any language entity that takes arguments on its left.
+// It can have 0 or more arguments to its right.
+//
+type Left interface {
+	LeD(p *Parser, i *lexer.Item, lhs *Node) (*Node, error) // Left Denotation
+	LBP() int                                               // left binding power (or precedence).
 }
 
-var nullOp = map[token.Token]nullOpSpec{
-	token.OpPlus:     {6, nullUnaryOp},
-	token.OpMinus:    {6, nullUnaryOp},
-	token.OpXor:      {6, nullUnaryOp},
-	token.LeftParen:  {0, nullParen},
-	token.Identifier: {0, nullLeaf},
-	token.Immediate:  {0, nullLeaf},
+// PostfixFunc is the prototoype of the Parse function for Postfix.
+//
+type PostfixFunc func(p *Parser, i *lexer.Item, lhs *Node) (*Node, error)
+
+// LeD implements the LeD method for the Postfix interface.
+//
+func (f PostfixFunc) LeD(p *Parser, i *lexer.Item, lhs *Node) (*Node, error) {
+	return f(p, i, lhs)
 }
 
-func leftBinOp(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error) {
-	var prec int
-	if s.ra {
-		prec = s.prec
-	} else {
-		prec = s.prec + 1
-	}
-	rhs, err := p.parseExpr(prec)
-	if err != nil {
-		return nil, err
-	}
-	if lhs.l.Token == i.Token {
-		lhs.c = append(lhs.c, rhs)
-		return lhs, nil
-	}
-	return &Node{i, []*Node{lhs, rhs}}, nil
+type postfixWrapper struct {
+	PostfixFunc
+	p int
 }
 
-func leftChain(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error) {
-	rhs, err := p.parseExpr(s.prec + 1)
-	if err != nil {
-		return nil, err
-	}
-	if lhs.l.Token == i.Token {
-		lhs.c = append(lhs.c, rhs)
-		return lhs, nil
-	}
-	return &Node{i, []*Node{lhs, rhs}}, nil
+func (w *postfixWrapper) LBP() int { return w.p }
+
+// WrapPostfixFunc returns a Postfix wrapper around the provided function
+// with the given precedence.
+//
+func WrapPostfixFunc(prec int, f PostfixFunc) Left {
+	return &postfixWrapper{f, prec}
 }
 
-func leftPostfix(_ *Parser, lhs *Node, i *lexer.Item, _ *leftOpSpec) (*Node, error) {
-	return &Node{i, []*Node{lhs}}, nil
+// func (w *postfixWrapper) Parse(p *Parser, i *lexer.Item, lhs *Node) (*Node, error) {
+// 	return w.f(p, i, lhs)
+// }
+
+var postfix = map[token.Token]Left{
+// token.Comma:     {0, leftChain},
+// token.OpOr:      {1, leftBinOp},
+// token.OpXor:     {2, leftBinOp},
+// token.OpAnd:     {3, leftBinOp},
+// token.OpPlus:    {4, leftBinOp},
+// token.OpMinus:   {4, leftBinOp},
+// token.OpFactor:  {5, leftBinOp},
+// token.OpDiv:     {5, leftBinOp},
+// token.OpMod:     {5, leftBinOp},
+// token.LeftParen: {6, leftParen},
+// token.Error:     {100, leftError},
 }
 
-func leftParen(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error) {
-	inner, err := p.parseExpr(0)
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := p.expect(token.RightParen); !ok {
-		return nil, errors.New("missing )")
-	}
-	i.Value = string('·')
-	return &Node{i, []*Node{lhs, inner}}, nil
+var prefix = map[token.Token]Null{
+	token.Error:      tokenError{},
+	token.Identifier: NullFunc(Leaf),
+	token.Immediate:  NullFunc(Leaf),
+	token.LeftParen:  SubExpression(token.RightParen),
+	token.OpPlus:     UnaryOperator(6),
+	token.OpMinus:    UnaryOperator(6),
+	token.OpXor:      UnaryOperator(6),
 }
 
-func nullUnaryOp(p *Parser, i *lexer.Item, s *nullOpSpec) (*Node, error) {
-	rhs, err := p.parseExpr(s.prec)
-	if err != nil {
-		return nil, err
-	}
-	return &Node{i, []*Node{rhs}}, nil
+type tokenError struct{}
+
+func (tokenError) NuD(p *Parser, i *lexer.Item) (*Node, error) {
+	return nil, &ParseError{f: p.f, i: i, e: errLexer}
 }
 
-func nullParen(p *Parser, i *lexer.Item, s *nullOpSpec) (*Node, error) {
-	inner, err := p.parseExpr(0)
-	if err != nil {
-		return nil, err
-	}
-	if _, ok := p.expect(token.RightParen); !ok {
-		return nil, errors.New("missing )")
-	}
-	return inner, nil
+func (tokenError) LeD(p *Parser, i *lexer.Item, _ *Node) (*Node, error) {
+	return nil, &ParseError{f: p.f, i: i, e: errLexer}
 }
 
-func nullLeaf(p *Parser, i *lexer.Item, s *nullOpSpec) (*Node, error) {
+func (tokenError) Precedence() int {
+	//
+	return maxPrec
+}
+
+// Leaf returns a leaf node.
+//
+func Leaf(p *Parser, i *lexer.Item) (*Node, error) {
 	return &Node{i, nil}, nil
 }
 
+// SubExpression parses a sub expression ending with the given token.
+//
+func SubExpression(end token.Token) Null {
+	return NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
+		inner, err := p.parseExpr(0)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := p.expect(end); !ok {
+			return nil, &ParseError{f: p.f, i: i, e: errUnbalancedParen}
+		}
+		return inner, nil
+	})
+}
+
+// UnaryOperator returns a unary operator with the given precedence.
+//
+func UnaryOperator(prec int) Null {
+	return NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
+		rhs, err := p.parseExpr(prec)
+		if err != nil {
+			return nil, err
+		}
+		return &Node{i, []*Node{rhs}}, nil
+	})
+}
+
+// func leftError(p *Parser, _ *Node, i *lexer.Item) (*Node, error) {
+// 	return nil, &ParseError{f: p.f, i: i, e: errLexer}
+// }
+
+// func nullError(p *Parser, i *lexer.Item) (*Node, error) {
+// 	return nil, &ParseError{f: p.f, i: i, e: errLexer}
+// }
+
+// func leftBinOp(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error) {
+// 	rhs, err := p.parseExpr(s.prec + 1)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if lhs.l.Token == i.Token {
+// 		lhs.c = append(lhs.c, rhs)
+// 		return lhs, nil
+// 	}
+// 	return &Node{i, []*Node{lhs, rhs}}, nil
+// }
+
+// func leftChain(p *Parser, lhs *Node, i *lexer.Item, s *leftOpSpec) (*Node, error) {
+// 	rhs, err := p.parseExpr(s.prec + 1)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if lhs.l.Token == i.Token {
+// 		lhs.c = append(lhs.c, rhs)
+// 		return lhs, nil
+// 	}
+// 	return &Node{i, []*Node{lhs, rhs}}, nil
+// }
+
+// func leftParen(p *Parser, lhs *Node, i *lexer.Item, _ *leftOpSpec) (*Node, error) {
+// 	inner, err := p.parseExpr(0)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	if _, ok := p.expect(token.RightParen); !ok {
+// 		return nil, &ParseError{f: p.f, i: i, e: errUnbalancedParen}
+// 	}
+// 	i.Value = string('·')
+// 	return &Node{i, []*Node{lhs, inner}}, nil
+// }
+
 type Parser struct {
-	f  *token.File
-	l  *lexer.Lexer
-	n  *lexer.Item
-	lt map[token.Token]leftOpSpec
-	nt map[token.Token]nullOpSpec
+	f    *token.File
+	l    *lexer.Lexer
+	n    *lexer.Item
+	post map[token.Token]Left
+	pre  map[token.Token]Null
 }
 
 func NewParser(f *token.File) *Parser {
-	return &Parser{f, lexer.New(f, nil), nil, leftOp, nullOp}
+	return &Parser{f, lexer.New(f), nil, postfix, prefix}
 }
 
 // ParseExpr parses expressions using a precedence climbing algorithm.
@@ -211,8 +281,6 @@ func (p *Parser) skipToEOL() {
 // expectEndOfExpr checks wether the next token marks the end of an expression.
 // Expressions are terminated by a comma, EOL or EOF. The token marking the end
 // of the expression is never consumed.
-// On platforms with register displacement notation using brackets [], the opening
-// bracket could be added as an end of expression marker.
 //
 func (p *Parser) expectEndOfExpr() error {
 	i := p.nextNonSpace()
@@ -225,10 +293,10 @@ func (p *Parser) expectEndOfExpr() error {
 		return nil
 	case token.Error:
 		p.skipToEOL()
-		return &ParseError{f: p.f, i: i, k: errLexer}
+		return &ParseError{f: p.f, i: i, e: errLexer}
 	default:
 		p.skipToEOL()
-		return &ParseError{f: p.f, i: i, k: errUnexpectedToken}
+		return &ParseError{f: p.f, i: i, e: errUnexpectedToken}
 	}
 }
 
@@ -267,18 +335,43 @@ func (p *Parser) putBack(i *lexer.Item) {
 // nextPrimary returns the next token where the token is expected to be a primary.
 // Filters special cases like builtins that are composed of two other tokens:
 //
-//		Builtin := OpMod Identifier
+//		Builtin := '%' Identifier
 //
 func (p *Parser) nextPrimary() *lexer.Item {
 	i := p.nextNonSpace()
 	if i.Token == token.OpMod {
-		t2, ok := p.expect(token.Identifier)
-		if ok {
-			i.Token = token.BuiltIn
-			i.Value = "%" + t2.Value.(string)
+		if i2, ok := p.expect(token.Identifier); ok {
+			i2.Token = token.BuiltIn
+			return i2
 		}
 	}
 	return i
+}
+
+func (p *Parser) lookupPrefix(t token.Token) Null {
+	pf := p.pre[t]
+	if pf != nil {
+		return pf
+	}
+	return NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
+		return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
+	})
+}
+
+// pfNotFound is rteturned when no matching postfix operator is found.
+// since it's not necessarily an error, we set its precedence to the minimum
+// possible value.
+//
+var pfNotFound = WrapPostfixFunc(minPrec, func(p *Parser, i *lexer.Item, _ *Node) (*Node, error) {
+	return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
+})
+
+func (p *Parser) lookupPostfix(t token.Token) Left {
+	pf := p.post[t]
+	if pf != nil {
+		return pf
+	}
+	return pfNotFound
 }
 
 // parseExpr returns the AST for an expression.
@@ -286,26 +379,23 @@ func (p *Parser) nextPrimary() *lexer.Item {
 // identify either a built-in function (if the lhs of the node is a token.BuiltIn)
 //  or a register displacement (any other lhs, assumed to be an immediate).
 //
-func (p *Parser) parseExpr(pmin int) (*Node, error) {
+func (p *Parser) parseExpr(rbp int) (*Node, error) {
 	// primary
-	t := p.nextPrimary()
-	s, ok := p.nt[t.Token]
-	if !ok {
-		return nil, &ParseError{f: p.f, i: t, k: errUnexpectedToken}
-	}
-	n, err := s.nud(p, t, &s)
+	i := p.nextPrimary()
+	pr := p.lookupPrefix(i.Token)
+	n, err := pr.NuD(p, i)
 	if err != nil {
 		return nil, err
 	}
 	//
 	for {
-		i := p.nextNonSpace()
-		s, ok := p.lt[i.Token]
-		if !ok || s.prec < pmin {
+		i = p.nextNonSpace()
+		po := p.lookupPostfix(i.Token)
+		if po.LBP() < rbp {
 			p.putBack(i)
 			return n, nil
 		}
-		n, err = s.led(p, n, i, &s)
+		n, err = po.LeD(p, i, n)
 		if err != nil {
 			return nil, err
 		}
