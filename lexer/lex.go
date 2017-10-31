@@ -45,15 +45,13 @@ func (i *Item) String() string {
 // A Lexer holds the internal state of the lexer while processing a given text.
 //
 type Lexer struct {
+	r            *reader
 	f            *token.File
 	isSeparator  func(token.Token, rune) bool
 	isIdentifier func(rune, bool) bool
 	err          func(*Lexer, error)
 	t            []rune    // token string buffer
-	s            token.Pos // current token start pos
-	p            token.Pos // position of last rune read
-	r            rune      // last rune read
-	u            bool      // undo
+	n            token.Pos // position of next rune read
 	c            chan *Item
 	done         chan struct{}
 }
@@ -72,9 +70,9 @@ func New(f *token.File, opts ...Option) *Lexer {
 		f(&o)
 	}
 	l := &Lexer{
+		r:            &reader{r: f},
 		f:            f,
 		c:            make(chan *Item),
-		p:            -1,
 		done:         make(chan struct{}),
 		isSeparator:  o.isSeparator,
 		isIdentifier: o.isIdentifier,
@@ -99,7 +97,7 @@ func (l *Lexer) Lex() *Item {
 		// l.c has been closed
 		return &Item{
 			Token: token.EOF,
-			Pos:   l.p,
+			Pos:   l.n - 1,
 			Value: nil,
 		}
 	}
@@ -127,7 +125,7 @@ func (l *Lexer) File() *token.File {
 func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
 	if l.emitItem(&Item{
 		Token: t,
-		Pos:   l.s,
+		Pos:   l.n - token.Pos(len(l.t)),
 		Value: value,
 	}) {
 		return lexAny
@@ -143,14 +141,10 @@ func (l *Lexer) emitItem(i *Item) bool {
 	for {
 		select {
 		case l.c <- i:
-			l.s = l.nextPos()
-			// Reuse the l.t slice and re-append l.r if needed.
+			// Reuse the l.t slice.
 			// We could end up with a large-ish slice hanging around (i.e. as
 			// big as the largest lexed token), but this limits garbage collection.
 			l.t = l.t[:0]
-			if l.u {
-				l.t = append(l.t, l.r)
-			}
 			if i.Token != token.EOF {
 				return true
 			}
@@ -168,7 +162,7 @@ func (l *Lexer) emitItem(i *Item) bool {
 func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
 	i := &Item{
 		Token: token.Error,
-		Pos:   l.nextPos() - 1, // that's where the error actually occurred
+		Pos:   l.n - 1, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	}
 	if l.emitItem(i) {
@@ -178,11 +172,7 @@ func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
 }
 
 func (l *Lexer) next() rune {
-	if l.u {
-		l.u = false
-		return l.r
-	}
-	r, s, err := l.f.ReadRune()
+	r, s, err := l.r.ReadRune()
 	switch {
 	case s == 0 || err == io.EOF:
 		r = eof
@@ -190,34 +180,30 @@ func (l *Lexer) next() rune {
 		r = eof
 		defer l.err(l, err)
 	}
-	l.p++
-	if l.r == '\n' {
-		l.f.AddLine(l.p)
+	l.n++
+	if r == '\n' {
+		l.f.AddLine(l.n)
 	}
-	l.r = r
 	l.t = append(l.t, r)
 	return r
 }
 
-// undo undoes the last call to next(). Calling this function twice
-// in a raw or without calling next() first will cause a panic.
+// undo undoes the last call to next().
 //
 func (l *Lexer) undo() {
-	if l.u || !l.p.IsValid() {
+	ln := len(l.t) - 1
+	if ln < 0 {
 		panic("invalid use of undo")
 	}
-	l.u = true
-}
-
-func (l *Lexer) nextPos() token.Pos {
-	if l.u {
-		return l.p
+	l.t = l.t[:ln]
+	l.n--
+	if err := l.r.UnreadRune(); err != nil {
+		panic(err)
 	}
-	return l.p + 1
 }
 
 func (l *Lexer) tokenString() string {
-	return string(l.t[:l.nextPos()-l.s])
+	return string(l.t)
 }
 
 func lexAny(l *Lexer) stateFn {
@@ -372,7 +358,7 @@ func lexIntDigits(base int32) stateFn {
 func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
 	// len is at least 2 for bases 2 and 16. i.e. we've read at least
 	// "0b" or "0x").
-	sz := l.nextPos() - l.s
+	sz := len(l.t)
 	if base == 16 && sz < 3 {
 		return l.errorf("malformed immediate value \"%s\"", l.tokenString())
 	} else if base == 2 && sz == 2 {
@@ -409,8 +395,7 @@ func skipToEOL(l *Lexer) stateFn {
 		r := l.next()
 		if r == eof || r == '\n' {
 			l.undo()
-			// reset start for '\n' or EOF
-			l.s = l.nextPos()
+			l.t = l.t[:0]
 			return lexAny
 		}
 	}

@@ -49,7 +49,7 @@ func ErrorHandler(f func(l *Lexer, err error)) Option {
 }
 
 func defErrorHandler(l *Lexer, err error) {
-	line, col := l.f.Position(l.nextPos() - 1)
+	line, col := l.f.Position(l.n - 1)
 	panic(fmt.Errorf("%s:%d:%d io error \"%s\"", l.f.Name(), line, col, err))
 }
 

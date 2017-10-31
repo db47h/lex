@@ -91,7 +91,9 @@ func (f *File) ReadRune() (r rune, sz int, err error) {
 //
 func (f *File) AddLine(pos Pos) {
 	f.m.Lock()
-	f.lines = append(f.lines, pos)
+	if l := len(f.lines); l == 0 || f.lines[l-1] < pos {
+		f.lines = append(f.lines, pos)
+	}
 	f.m.Unlock()
 }
 
