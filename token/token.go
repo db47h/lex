@@ -108,6 +108,7 @@ func (f *File) Position(pos Pos) (line int, col int) {
 			j = h
 		}
 	}
+	col = int(pos - f.lines[i-1] + 1)
 	f.m.RUnlock()
-	return i, int(pos - f.lines[i-1] + 1)
+	return i, col
 }
