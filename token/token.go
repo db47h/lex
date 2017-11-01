@@ -95,22 +95,22 @@ func (f *File) AddLine(pos Pos) {
 	f.m.Unlock()
 }
 
-func (f *File) findPos(p Pos, s, e int) int {
-	if e-s <= 1 {
-		return s
-	}
-	m := s + (e-s)/2
-	if f.lines[m] > p {
-		return f.findPos(p, s, m)
-	}
-	return f.findPos(p, m, e)
-}
-
 // Position returns the 1-based line and column for a given pos.
 //
 func (f *File) Position(pos Pos) (line int, col int) {
 	f.m.RLock()
-	line = f.findPos(pos, 0, len(f.lines))
+	i, j := 0, len(f.lines)
+	for i < j {
+		h := int(uint(i+j) >> 1)
+		if !(f.lines[h] >= pos) {
+			i = h + 1
+		} else {
+			j = h
+		}
+	}
+	if i >= len(f.lines) || f.lines[i] > pos {
+		i--
+	}
 	f.m.RUnlock()
-	return line + 1, int(pos - f.lines[line] + 1)
+	return i + 1, int(pos - f.lines[i] + 1)
 }
