@@ -48,7 +48,6 @@ func (i *Item) String() string {
 // A Lexer holds the internal state of the lexer while processing a given text.
 //
 type Lexer struct {
-	r            *reader
 	f            *token.File
 	isSeparator  func(token.Token, rune) bool
 	isIdentifier func(rune, bool) bool
@@ -73,7 +72,6 @@ func New(f *token.File, opts ...Option) *Lexer {
 		f(&o)
 	}
 	l := &Lexer{
-		r:            &reader{r: f},
 		f:            f,
 		c:            make(chan *Item),
 		done:         make(chan struct{}),
@@ -157,9 +155,8 @@ func (l *Lexer) emitItem(i *Item) error {
 	}
 }
 
-// errorf emits an error token. The Item value is set to a string
-// representation of the error. Returns errDone if the lexer has been aborted.
-// see emitItem.
+// errorf emits an error token. The Item value is set to a string representation
+// of the error. Returns errDone if the lexer has been aborted (see emitItem).
 //
 func (l *Lexer) errorf(format string, args ...interface{}) error {
 	i := &Item{
@@ -171,7 +168,7 @@ func (l *Lexer) errorf(format string, args ...interface{}) error {
 }
 
 func (l *Lexer) next() rune {
-	r, s, err := l.r.ReadRune()
+	r, s, err := l.f.ReadRune()
 	switch {
 	case s == 0 || err == io.EOF:
 		r = eof
@@ -196,7 +193,7 @@ func (l *Lexer) backup() {
 	}
 	l.t = l.t[:ln]
 	l.n--
-	if err := l.r.UnreadRune(); err != nil {
+	if err := l.f.UnreadRune(); err != nil {
 		panic(err)
 	}
 }
@@ -275,6 +272,7 @@ func lexAny(l *Lexer) stateFn {
 func lexSpace(l *Lexer) stateFn {
 	for {
 		r := l.next()
+		// TODO: watch out for EOL handling.
 		if r != eof && unicode.IsSpace(r) && r != '\n' {
 			continue
 		}
