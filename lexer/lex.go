@@ -8,6 +8,7 @@
 package lexer
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -17,6 +18,8 @@ import (
 )
 
 const eof = -1
+
+var errDone = errors.New("close requested")
 
 // Item represents a token returned from the lexer.
 //
@@ -119,56 +122,52 @@ func (l *Lexer) File() *token.File {
 	return l.f
 }
 
-// emit emits a single token. Returns the next state depending
-// on the success of the operation.
+// emit emits a single token. Returns the next state depending on the success of the operation.
 //
-func (l *Lexer) emit(t token.Token, value interface{}) stateFn {
-	if l.emitItem(&Item{
+func (l *Lexer) emit(t token.Token, value interface{}, nextState stateFn) stateFn {
+	if err := l.emitItem(&Item{
 		Token: t,
 		Pos:   l.n - token.Pos(len(l.t)),
 		Value: value,
-	}) {
-		return lexAny
+	}); err != nil {
+		return nil
 	}
-	return nil
+	return nextState
 }
 
-// emitItem emits the given item. Returns false if the lexer has been aborted
-// or the last token is EOF. If false is returned, the caller (usually a stateFn)
-// should return nil to abort the lexer's loop.
+// emitItem emits the given item. Returns errDone if the lexer has been aborted
+// or the last token is EOF, in which case the caller (usually a stateFn) should
+// return nil to abort the lexer's loop.
 //
-func (l *Lexer) emitItem(i *Item) bool {
+func (l *Lexer) emitItem(i *Item) error {
 	for {
 		select {
 		case l.c <- i:
 			// Reuse the l.t slice.
 			// We could end up with a large-ish slice hanging around (i.e. as
 			// big as the largest lexed token), but this limits garbage collection.
-			l.t = l.t[:0]
+			l.discard()
 			if i.Token != token.EOF {
-				return true
+				return nil
 			}
-			return false
+			return errDone
 		case <-l.done:
-			return false
+			return errDone
 		}
 	}
 }
 
 // errorf emits an error token. The Item value is set to a string
-// representation of the error. Places the lexer in skipToEOL state (i.e. all
-// input until the next EOL is ignored).
+// representation of the error. Returns errDone if the lexer has been aborted.
+// see emitItem.
 //
-func (l *Lexer) errorf(format string, args ...interface{}) stateFn {
+func (l *Lexer) errorf(format string, args ...interface{}) error {
 	i := &Item{
 		Token: token.Error,
 		Pos:   l.n - 1, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	}
-	if l.emitItem(i) {
-		return skipToEOL
-	}
-	return nil
+	return l.emitItem(i)
 }
 
 func (l *Lexer) next() rune {
@@ -188,9 +187,9 @@ func (l *Lexer) next() rune {
 	return r
 }
 
-// undo undoes the last call to next().
+// backup reverts the last call to next().
 //
-func (l *Lexer) undo() {
+func (l *Lexer) backup() {
 	ln := len(l.t) - 1
 	if ln < 0 {
 		panic("invalid use of undo")
@@ -202,66 +201,76 @@ func (l *Lexer) undo() {
 	}
 }
 
+// dicard discards the current token
+//
+func (l *Lexer) discard() {
+	l.t = l.t[:0]
+}
+
 func (l *Lexer) tokenString() string {
 	return string(l.t)
 }
 
 func lexAny(l *Lexer) stateFn {
-	r := l.next()
-	switch r {
-	case eof:
-		return l.emit(token.EOF, nil)
-	case '\n':
-		return l.emit(token.EOL, nil)
-	case '(':
-		return l.emit(token.LeftParen, nil)
-	case ')':
-		return l.emit(token.RightParen, nil)
-	case '[':
-		return l.emit(token.LeftBracket, nil)
-	case ']':
-		return l.emit(token.RightBracket, nil)
-	case ':':
-		return l.emit(token.Colon, nil)
-	case '\\':
-		return l.emit(token.Backslash, nil)
-	case ',':
-		return l.emit(token.Comma, nil)
-	case '+':
-		return l.emit(token.OpPlus, nil)
-	case '-':
-		return l.emit(token.OpMinus, nil)
-	case '*':
-		return l.emit(token.OpFactor, nil)
-	case '/':
-		return l.emit(token.OpDiv, nil)
-	case '%':
-		return l.emit(token.OpMod, nil)
-	case '&':
-		return l.emit(token.OpAnd, nil)
-	case '|':
-		return l.emit(token.OpOr, nil)
-	case '^':
-		return l.emit(token.OpXor, nil)
-	case ';':
-		return lexComment
-	case '.': // not necessarily a word separator
-		return l.emit(token.Dot, nil)
-	}
-
-	switch {
-	case unicode.IsSpace(r):
-		return lexSpace
-	case r >= '0' && r <= '9':
-		if r != '0' {
-			l.undo() // let scanInt read the whole number
-			return lexIntDigits(10)
+	for {
+		r := l.next()
+		switch r {
+		case eof:
+			return l.emit(token.EOF, nil, lexAny)
+		case '\n':
+			return l.emit(token.EOL, nil, lexAny)
+		case '(':
+			return l.emit(token.LeftParen, nil, lexAny)
+		case ')':
+			return l.emit(token.RightParen, nil, lexAny)
+		case '[':
+			return l.emit(token.LeftBracket, nil, lexAny)
+		case ']':
+			return l.emit(token.RightBracket, nil, lexAny)
+		case ':':
+			return l.emit(token.Colon, nil, lexAny)
+		case '\\':
+			return l.emit(token.Backslash, nil, lexAny)
+		case ',':
+			return l.emit(token.Comma, nil, lexAny)
+		case '+':
+			return l.emit(token.OpPlus, nil, lexAny)
+		case '-':
+			return l.emit(token.OpMinus, nil, lexAny)
+		case '*':
+			return l.emit(token.OpFactor, nil, lexAny)
+		case '/':
+			return l.emit(token.OpDiv, nil, lexAny)
+		case '%':
+			return l.emit(token.OpMod, nil, lexAny)
+		case '&':
+			return l.emit(token.OpAnd, nil, lexAny)
+		case '|':
+			return l.emit(token.OpOr, nil, lexAny)
+		case '^':
+			return l.emit(token.OpXor, nil, lexAny)
+		case ';':
+			return lexComment
+		case '.':
+			return l.emit(token.Dot, nil, lexAny)
 		}
-		return lexIntBase
-	case l.isIdentifier(r, true):
-		return lexIdentifier
+
+		switch {
+		case unicode.IsSpace(r):
+			return lexSpace
+		case r >= '0' && r <= '9':
+			if r != '0' {
+				l.backup() // let scanInt read the whole number
+				return lexIntDigits(10)
+			}
+			return lexIntBase
+		case l.isIdentifier(r, true):
+			return lexIdentifier
+		}
+		if err := l.errorf("invalid character %#U", r); err != nil {
+			return nil
+		}
 	}
-	return l.errorf("invalid character %#U", r)
 }
 
 func lexSpace(l *Lexer) stateFn {
@@ -271,8 +280,8 @@ func lexSpace(l *Lexer) stateFn {
 			continue
 		}
 		// revert last rune read
-		l.undo()
-		return l.emit(token.Space, nil)
+		l.backup()
+		return l.emit(token.Space, nil, lexAny)
 	}
 }
 
@@ -280,8 +289,8 @@ func lexComment(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if r == eof || r == '\n' {
-			l.undo()
-			return l.emit(token.Comment, l.tokenString())
+			l.backup()
+			return l.emit(token.Comment, l.tokenString(), lexAny)
 		}
 	}
 }
@@ -299,15 +308,15 @@ func lexIntBase(l *Lexer) stateFn {
 	case r >= '0' && r <= '9':
 		// undo in order to let scanIntDigits read the whole number
 		// (except the leading 0) or error appropriately if r is >= 8
-		l.undo()
+		l.backup()
 		return lexIntDigits(8)
 	case r == 'x' || r == 'X':
 		return lexIntDigits(16)
 	case r == 'b': // possible LocalLabel caught in scanIntDigits
 		return lexIntDigits(2)
 	default:
-		l.undo()
-		return l.emit(token.Immediate, &big.Int{})
+		l.backup()
+		return l.emit(token.Immediate, &big.Int{}, lexAny)
 	}
 }
 
@@ -334,9 +343,17 @@ func lexIntDigits(base int32) stateFn {
 				continue
 			}
 			if rl >= base && rl <= 9 {
-				return l.errorf("invalid character %#U in base %d immediate value", r, base)
+				if err := l.errorf("invalid character %#U in base %d immediate value", r, base); err != nil {
+					return nil
+				}
+				// skip remaining digits.
+				for r := l.next(); r >= '0' && r <= '9'; r = l.next() {
+				}
+				l.backup()
+				l.discard()
+				return lexAny
 			}
-			l.undo()
+			l.backup()
 			return emitInt(l, base, v)
 		}
 	}
@@ -352,9 +369,9 @@ func emitInt(l *Lexer, base int32, value *big.Int) stateFn {
 	sz := len(l.t)
 	if (base == 2 || base == 16) && sz < 3 {
 		// undo the trailing 'x' or 'b'
-		l.undo()
+		l.backup()
 	}
-	return l.emit(token.Immediate, value)
+	return l.emit(token.Immediate, value, lexAny)
 }
 
 // lexIdentifier scans an identifier starting with _ or a unicode letter
@@ -367,24 +384,13 @@ func lexIdentifier(l *Lexer) stateFn {
 	for {
 		r := l.next()
 		if l.isSeparator(token.Identifier, r) {
-			l.undo()
-			return l.emit(token.Identifier, l.tokenString())
+			l.backup()
+			return l.emit(token.Identifier, l.tokenString(), lexAny)
 		}
 		if !l.isIdentifier(r, false) {
-			return l.errorf("invalid identifier character %#U", r)
-		}
-	}
-}
-
-// skipToEOL silently eats everything until next EOL
-// and keep that EOL for the next next()
-//
-func skipToEOL(l *Lexer) stateFn {
-	for {
-		r := l.next()
-		if r == eof || r == '\n' {
-			l.undo()
-			l.t = l.t[:0]
+			if err := l.errorf("invalid identifier character %#U", r); err != nil {
+				return nil
+			}
 			return lexAny
 		}
 	}

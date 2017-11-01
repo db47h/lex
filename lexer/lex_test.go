@@ -23,6 +23,7 @@ func TestLexer_Lex(t *testing.T) {
 		{"identifier", "foo", []string{"1:1: Identifier foo", "1:4: EOF"}},
 		{"bad_identifier", "$r\nok_id", []string{
 			"1:1: Error invalid character U+0024 '$'",
+			"1:2: Identifier r",
 			"1:3: EOL",
 		}},
 		{"comment", "ok;hello", []string{
@@ -30,11 +31,11 @@ func TestLexer_Lex(t *testing.T) {
 			"1:3: Comment ;hello",
 			"1:9: EOF",
 		}},
-		{"immediate8", "01234567\n012345678\n0a\n09", []string{
+		{"immediate8", "01234567\n012345678\n0a\n094", []string{
 			"1:1: Immediate 342391", "1:9: EOL",
 			"2:9: Error invalid character U+0038 '8' in base 8 immediate value", "2:10: EOL",
 			"3:1: Immediate 0", "3:2: Identifier a", "3:3: EOL",
-			"4:2: Error invalid character U+0039 '9' in base 8 immediate value", "4:3: EOF",
+			"4:2: Error invalid character U+0039 '9' in base 8 immediate value", "4:4: EOF",
 		}},
 		{"immediate10", "0\n12\n1a", []string{
 			"1:1: Immediate 0", "1:2: EOL",
