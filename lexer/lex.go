@@ -212,65 +212,64 @@ func (l *Lexer) tokenString() string {
 }
 
 func lexAny(l *Lexer) stateFn {
-	for {
-		r := l.next()
-		switch r {
-		case eof:
-			return l.emit(token.EOF, nil, lexAny)
-		case '\n':
-			return l.emit(token.EOL, nil, lexAny)
-		case '(':
-			return l.emit(token.LeftParen, nil, lexAny)
-		case ')':
-			return l.emit(token.RightParen, nil, lexAny)
-		case '[':
-			return l.emit(token.LeftBracket, nil, lexAny)
-		case ']':
-			return l.emit(token.RightBracket, nil, lexAny)
-		case ':':
-			return l.emit(token.Colon, nil, lexAny)
-		case '\\':
-			return l.emit(token.Backslash, nil, lexAny)
-		case ',':
-			return l.emit(token.Comma, nil, lexAny)
-		case '+':
-			return l.emit(token.OpPlus, nil, lexAny)
-		case '-':
-			return l.emit(token.OpMinus, nil, lexAny)
-		case '*':
-			return l.emit(token.OpFactor, nil, lexAny)
-		case '/':
-			return l.emit(token.OpDiv, nil, lexAny)
-		case '%':
-			return l.emit(token.OpMod, nil, lexAny)
-		case '&':
-			return l.emit(token.OpAnd, nil, lexAny)
-		case '|':
-			return l.emit(token.OpOr, nil, lexAny)
-		case '^':
-			return l.emit(token.OpXor, nil, lexAny)
-		case ';':
-			return lexComment
-		case '.':
-			return l.emit(token.Dot, nil, lexAny)
-		}
-
-		switch {
-		case unicode.IsSpace(r):
-			return lexSpace
-		case r >= '0' && r <= '9':
-			if r != '0' {
-				l.backup() // let scanInt read the whole number
-				return lexIntDigits(10)
-			}
-			return lexIntBase
-		case l.isIdentifier(r, true):
-			return lexIdentifier
-		}
-		if err := l.errorf("invalid character %#U", r); err != nil {
-			return nil
-		}
+	r := l.next()
+	switch r {
+	case eof:
+		return l.emit(token.EOF, nil, lexAny)
+	case '\n':
+		return l.emit(token.EOL, nil, lexAny)
+	case '(':
+		return l.emit(token.LeftParen, nil, lexAny)
+	case ')':
+		return l.emit(token.RightParen, nil, lexAny)
+	case '[':
+		return l.emit(token.LeftBracket, nil, lexAny)
+	case ']':
+		return l.emit(token.RightBracket, nil, lexAny)
+	case ':':
+		return l.emit(token.Colon, nil, lexAny)
+	case '\\':
+		return l.emit(token.Backslash, nil, lexAny)
+	case ',':
+		return l.emit(token.Comma, nil, lexAny)
+	case '+':
+		return l.emit(token.OpPlus, nil, lexAny)
+	case '-':
+		return l.emit(token.OpMinus, nil, lexAny)
+	case '*':
+		return l.emit(token.OpFactor, nil, lexAny)
+	case '/':
+		return l.emit(token.OpDiv, nil, lexAny)
+	case '%':
+		return l.emit(token.OpMod, nil, lexAny)
+	case '&':
+		return l.emit(token.OpAnd, nil, lexAny)
+	case '|':
+		return l.emit(token.OpOr, nil, lexAny)
+	case '^':
+		return l.emit(token.OpXor, nil, lexAny)
+	case ';':
+		return lexComment
+	case '.':
+		return l.emit(token.Dot, nil, lexAny)
 	}
+
+	switch {
+	case unicode.IsSpace(r):
+		return lexSpace
+	case r >= '0' && r <= '9':
+		if r != '0' {
+			l.backup() // let scanInt read the whole number
+			return lexIntDigits(10)
+		}
+		return lexIntBase
+	case l.isIdentifier(r, true):
+		return lexIdentifier
+	}
+	if err := l.errorf("invalid character %#U", r); err != nil {
+		return nil
+	}
+	return lexAny
 }
 
 func lexSpace(l *Lexer) stateFn {
