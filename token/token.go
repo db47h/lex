@@ -102,15 +102,12 @@ func (f *File) Position(pos Pos) (line int, col int) {
 	i, j := 0, len(f.lines)
 	for i < j {
 		h := int(uint(i+j) >> 1)
-		if !(f.lines[h] >= pos) {
+		if !(f.lines[h] > pos) {
 			i = h + 1
 		} else {
 			j = h
 		}
 	}
-	if i >= len(f.lines) || f.lines[i] > pos {
-		i--
-	}
 	f.m.RUnlock()
-	return i + 1, int(pos - f.lines[i] + 1)
+	return i, int(pos - f.lines[i-1] + 1)
 }
