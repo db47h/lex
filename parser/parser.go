@@ -29,14 +29,14 @@ type ParseError struct {
 // Error implements the error interface
 //
 func (e *ParseError) Error() string {
-	l, c := e.f.Position(e.i.Pos)
+	p := e.f.Position(e.i.Pos)
 	switch e.e {
 	case errLexer:
-		return fmt.Sprintf("%s:%d:%d %v", e.f.Name(), l, c, e.i.Value)
+		return fmt.Sprintf("%s: %v", p.String(), e.i.Value)
 	case errUnexpectedToken:
-		return fmt.Sprintf("%s:%d:%d: %s %s", e.f.Name(), l, c, "unexpected token", e.i.String())
+		return fmt.Sprintf("%s: %s %s", p.String(), "unexpected token", e.i.String())
 	default:
-		return fmt.Sprintf("%s:%d:%d %s", e.f.Name(), l, c, e.e)
+		return fmt.Sprintf("%s: %s", p.String(), e.e)
 	}
 }
 
@@ -144,24 +144,24 @@ var postfix = map[token.Token]Left{
 }
 
 var prefix = map[token.Token]Null{
-	token.Error:      tokenError{},
-	token.Identifier: NullFunc(Leaf),
-	token.Immediate:  NullFunc(Leaf),
-	token.LeftParen:  SubExpression(token.RightParen),
-	token.OpPlus:     UnaryOperator(6),
-	token.OpMinus:    UnaryOperator(6),
-	token.OpXor:      UnaryOperator(6),
-	token.OpMod: NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
-		n := p.next()
-		if n.Token != token.Identifier {
-			p.putBack(n)
-			// TODO: the error here is mode complex.
-			// should be something like "malformed built-in".
-			return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
-		}
-		i.Value = "%_" + n.Value.(string)
-		return &Node{l: i, c: nil}, nil
-	}),
+// token.Error:      tokenError{},
+// token.Identifier: NullFunc(Leaf),
+// token.Immediate:  NullFunc(Leaf),
+// token.LeftParen:  SubExpression(token.RightParen),
+// token.OpPlus:     UnaryOperator(6),
+// token.OpMinus:    UnaryOperator(6),
+// token.OpXor:      UnaryOperator(6),
+// token.OpMod: NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
+// 	n := p.next()
+// 	if n.Token != token.Identifier {
+// 		p.putBack(n)
+// 		// TODO: the error here is mode complex.
+// 		// should be something like "malformed built-in".
+// 		return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
+// 	}
+// 	i.Value = "%_" + n.Value.(string)
+// 	return &Node{l: i, c: nil}, nil
+// }),
 }
 
 type tokenError struct{}
@@ -265,7 +265,7 @@ type Parser struct {
 }
 
 func NewParser(f *token.File) *Parser {
-	return &Parser{f, lexer.New(f), nil, postfix, prefix}
+	return &Parser{f, lexer.New(f, nil), nil, postfix, prefix}
 }
 
 // ParseExpr parses expressions using a precedence climbing algorithm.
@@ -279,15 +279,15 @@ func (p *Parser) ParseExpr() (*Node, error) {
 	return n, p.expectEndOfExpr()
 }
 
-func (p *Parser) skipToEOL() {
-	for {
-		t := p.next()
-		if t.Token == token.EOL || t.Token == token.EOF {
-			p.putBack(t)
-			return
-		}
-	}
-}
+// func (p *Parser) skipToEOL() {
+// 	for {
+// 		t := p.next()
+// 		if t.Token == token.EOL || t.Token == token.EOF {
+// 			p.putBack(t)
+// 			return
+// 		}
+// 	}
+// }
 
 // expectEndOfExpr checks wether the next token marks the end of an expression.
 // Expressions are terminated by a comma, EOL or EOF. The token marking the end
@@ -296,17 +296,17 @@ func (p *Parser) skipToEOL() {
 func (p *Parser) expectEndOfExpr() error {
 	i := p.nextNonSpace()
 	switch i.Token {
-	case token.Comma:
-		p.putBack(i)
-		return nil
-	case token.EOL, token.EOF:
-		p.putBack(i)
-		return nil
+	// case token.Comma:
+	// 	p.putBack(i)
+	// 	return nil
+	// case token.EOL, token.EOF:
+	// 	p.putBack(i)
+	// 	return nil
 	case token.Error:
-		p.skipToEOL()
+		// p.skipToEOL()
 		return &ParseError{f: p.f, i: i, e: errLexer}
 	default:
-		p.skipToEOL()
+		//p.skipToEOL()
 		return &ParseError{f: p.f, i: i, e: errUnexpectedToken}
 	}
 }
@@ -331,8 +331,8 @@ func (p *Parser) next() *lexer.Item {
 func (p *Parser) nextNonSpace() *lexer.Item {
 	var i *lexer.Item
 	// eat spaces and comments
-	for i = p.next(); i.Token == token.Space || i.Token == token.Comment; i = p.next() {
-	}
+	// for i = p.next(); i.Token == token.Space || i.Token == token.Comment; i = p.next() {
+	// }
 	return i
 }
 

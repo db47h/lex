@@ -2,6 +2,7 @@ package token
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 )
@@ -12,6 +13,19 @@ const (
 )
 
 var errBufferOverflow = errors.New("ring buffer overflow")
+
+// Position describes an arbitrary source position including the file, line, and column location.
+//
+type Position struct {
+	Filename string
+	Offset   int
+	Line     int
+	Column   int
+}
+
+func (p Position) String() string {
+	return fmt.Sprintf("%s:%d:%d", p.Filename, p.Line, p.Column)
+}
 
 // A File represents an input file.
 //
@@ -90,7 +104,7 @@ func (f *File) AddLine(pos Pos) {
 
 // Position returns the 1-based line and column for a given pos.
 //
-func (f *File) Position(pos Pos) (line int, col int) {
+func (f *File) Position(pos Pos) Position {
 	f.m.RLock()
 	i, j := 0, len(f.lines)
 	for i < j {
@@ -101,7 +115,7 @@ func (f *File) Position(pos Pos) (line int, col int) {
 			j = h
 		}
 	}
-	col = int(pos - f.lines[i-1] + 1)
+	p := Position{f.name, int(pos), i, int(pos - f.lines[i-1] + 1)}
 	f.m.RUnlock()
-	return i, col
+	return p
 }

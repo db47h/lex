@@ -4,12 +4,12 @@ package token
 
 import "fmt"
 
-const _Token_name = "EOFEOLErrorIdentifierImmediateSpaceCommentLeftParenRightParenLeftBracketRightBracketColonCommaDotBackslashOpPlusOpMinusOpFactorOpDivOpModOpXorOpAndOpOr"
+const _Token_name = "NoneEOFErrorRawCharCustom"
 
-var _Token_index = [...]uint8{0, 3, 6, 11, 21, 30, 35, 42, 51, 61, 72, 84, 89, 94, 97, 106, 112, 119, 127, 132, 137, 142, 147, 151}
+var _Token_index = [...]uint8{0, 4, 7, 12, 19, 25}
 
 func (i Token) String() string {
-	if i >= Token(len(_Token_index)-1) {
+	if i < 0 || i >= Token(len(_Token_index)-1) {
 		return fmt.Sprintf("Token(%d)", i)
 	}
 	return _Token_name[_Token_index[i]:_Token_index[i+1]]

@@ -7,34 +7,16 @@ package token
 
 // Token represents a token's numeric ID
 //
-type Token uint
+type Token int
 
 // Token IDs
 //
 const (
-	EOF          Token = iota // end of file
-	EOL                       // end of line
-	Error                     // error -- the associated value is a string
-	Identifier                // any valid identifier
-	Immediate                 // immediate
-	Space                     // unicode.IsSpace() == true
-	Comment                   // ; -- and skip to EOL
-	LeftParen                 // (
-	RightParen                // )
-	LeftBracket               // [
-	RightBracket              // ]
-	Colon                     // :
-	Comma                     // ,
-	Dot                       // .
-	Backslash                 // \
-	OpPlus                    // +
-	OpMinus                   // -
-	OpFactor                  // *
-	OpDiv                     // /
-	OpMod                     // %
-	OpXor                     // ^
-	OpAnd                     // &
-	OpOr                      // |
+	Invalid Token = iota
+	EOF           // end of file
+	Error         // error -- the associated value is a string
+	RawChar       // unknown raw character
+	Custom        // any token value >= Custom may be used as custom tokens
 )
 
 // Pos represents a token's position within a File
