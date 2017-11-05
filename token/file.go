@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sync"
 )
 
 const (
@@ -39,7 +38,6 @@ type File struct {
 	o int // output index
 	i int // input index
 
-	m     sync.RWMutex
 	lines []Pos // 0-based line/Pos information
 }
 
@@ -95,17 +93,14 @@ func (f *File) UnreadRune() error {
 // automatically added at offset 0 by NewFile().
 //
 func (f *File) AddLine(pos Pos) {
-	f.m.Lock()
 	if l := len(f.lines); l == 0 || f.lines[l-1] < pos {
 		f.lines = append(f.lines, pos)
 	}
-	f.m.Unlock()
 }
 
 // Position returns the 1-based line and column for a given pos.
 //
 func (f *File) Position(pos Pos) Position {
-	f.m.RLock()
 	i, j := 0, len(f.lines)
 	for i < j {
 		h := int(uint(i+j) >> 1)
@@ -115,7 +110,5 @@ func (f *File) Position(pos Pos) Position {
 			j = h
 		}
 	}
-	p := Position{f.name, int(pos), i, int(pos - f.lines[i-1] + 1)}
-	f.m.RUnlock()
-	return p
+	return Position{f.name, int(pos), i, int(pos - f.lines[i-1] + 1)}
 }

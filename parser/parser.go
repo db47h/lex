@@ -325,7 +325,8 @@ func (p *Parser) next() *lexer.Item {
 		p.n = nil
 		return rv
 	}
-	return p.l.Lex()
+	i := p.l.Lex()
+	return &i
 }
 
 func (p *Parser) nextNonSpace() *lexer.Item {

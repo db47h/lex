@@ -1,24 +1,56 @@
-// Package lexer implements a lexer for assembler source text.
+// Package lexer implements a customizable lexer.
 //
-// This is a concurrent lexer, similar to https://golang.org/src/text/template/parse/lex.go.
+// The lexer state is implemented as state functions and it supports asynchronous
+// token emission.
 //
-// Despite its concurrent architecture, it essentially behaves as any other
-// lexer from an API standpoint.
+// Besides the fact that it can be customized, the implementation is similar to
+// https://golang.org/src/text/template/parse/lex.go.
+// Se also Rob Pike's talk about it: https://talks.golang.org/2011/lex.slide.
+// The key difference with the lexer in the Go template package is that it does
+// not use Go channels to emit tokens. The asynchronous token emission is
+// implemented via a FIFO queue. This is about 5 to 6 times faster than channels
+// in this specific case (channels are great, just not here).
 //
 package lexer
 
 import (
-	"errors"
 	"fmt"
 	"io"
 
 	"github.com/db47h/asm/token"
 )
 
+type queue struct {
+	items []Item
+	head  int
+	tail  int
+	count int
+}
+
+func (q *queue) push(i Item) {
+	if q.head == q.tail && q.count > 0 {
+		items := make([]Item, len(q.items)*2)
+		copy(items, q.items[q.head:])
+		copy(items[len(q.items)-q.head:], q.items[:q.head])
+		q.head = 0
+		q.tail = len(q.items)
+		q.items = items
+	}
+	q.items[q.tail] = i
+	q.tail = (q.tail + 1) % len(q.items)
+	q.count++
+}
+
+// check that q.count > 0 before calling pop
+func (q *queue) pop() Item {
+	i := q.head
+	q.head = (q.head + 1) % len(q.items)
+	q.count--
+	return q.items[i]
+}
+
 // EOF is the return value from Next() when EOF is reached.
 const EOF = -1
-
-var errDone = errors.New("close requested")
 
 // Item represents a token returned from the lexer.
 //
@@ -49,15 +81,14 @@ func (i *Item) String() string {
 // functions. Parsers should only call Lex() and Close().
 //
 type Lexer struct {
-	f    *token.File
-	l    *Lang
-	err  func(*Lexer, error)
-	B    []rune    // token string buffer
-	s    token.Pos // token start position
-	n    token.Pos // position of next rune read
-	c    chan Item
-	done chan struct{}
-	T    token.Token // current token guess
+	f     *token.File
+	l     *Lang
+	B     []rune      // token string buffer
+	s     token.Pos   // token start position
+	n     token.Pos   // position of next rune read
+	T     token.Token // current token guess
+	q     *queue      // Item queue
+	state StateFn
 }
 
 // A StateFn is a state function. When a StateFn is called, the input that lead top that
@@ -67,52 +98,24 @@ type StateFn func(l *Lexer) StateFn
 
 // New creates a new lexer associated with the given source file.
 //
-func New(f *token.File, l *Lang, opts ...Option) *Lexer {
-	o := options{
-		errorHandler: defErrorHandler,
+func New(f *token.File, l *Lang) *Lexer {
+	return &Lexer{
+		f: f,
+		l: l,
+		// initial q size must be an exponent of 2
+		q:     &queue{items: make([]Item, 1)},
+		state: StateAny,
 	}
-	for _, f := range opts {
-		f(&o)
-	}
-	lx := &Lexer{
-		f:    f,
-		l:    l,
-		c:    make(chan Item),
-		done: make(chan struct{}),
-		err:  o.errorHandler,
-	}
-	go lx.run()
-	return lx
-}
-
-func (l *Lexer) run() {
-	for state := StateAny; state != nil; state = state(l) {
-	}
-	close(l.c)
 }
 
 // Lex reads source text and returns the next item until EOF. Once this
 // function has returned an EOF token, any further calls to it will panic.
 //
 func (l *Lexer) Lex() Item {
-	if i, ok := <-l.c; ok {
-		return i
+	for l.q.count == 0 {
+		l.state = l.state(l)
 	}
-	// l.c has been closed
-	return Item{
-		Token: token.EOF,
-		Pos:   l.n - 1,
-		Value: nil,
-	}
-}
-
-// Close stops the lexer. This function should always be called once the lexer
-// is no longer needed.
-//
-func (l *Lexer) Close() {
-	if l.done != nil {
-		close(l.done)
-	}
+	return l.q.pop()
 }
 
 // File returns the token.File used as input for the lexer.
@@ -121,54 +124,25 @@ func (l *Lexer) File() *token.File {
 	return l.f
 }
 
-// Emit emits a single token. Returns the next state or nil depending on the success of the operation.
+// Emit emits a single token.
 //
-func (l *Lexer) Emit(t token.Token, value interface{}, nextState StateFn) StateFn {
-	if err := l.EmitItem(Item{
+func (l *Lexer) Emit(t token.Token, value interface{}) {
+	l.q.push(Item{
 		Token: t,
 		Pos:   l.s,
 		Value: value,
-	}); err != nil {
-		return nil
-	}
-	return nextState
-}
-
-// EmitItem emits the given item. Returns errDone if the lexer has been aborted
-// or the last token is EOF, in which case the caller (usually a StateFn) should
-// return nil to abort the lexer's loop.
-//
-func (l *Lexer) EmitItem(i Item) error {
-	if i.Token == token.Invalid {
-		panic("attempt to emit a None token")
-	}
-	for {
-		select {
-		case l.c <- i:
-			// Reuse the l.t slice.
-			// We could end up with a large-ish slice hanging around (i.e. as
-			// big as the largest lexed token), but this limits garbage collection.
-			l.Discard()
-			if i.Token != token.EOF {
-				return nil
-			}
-			return errDone
-		case <-l.done:
-			return errDone
-		}
-	}
+	})
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
-// of the error. Returns errDone if the lexer has been aborted (see EmitItem).
+// of the error.
 //
-func (l *Lexer) Errorf(format string, args ...interface{}) error {
-	i := Item{
+func (l *Lexer) Errorf(format string, args ...interface{}) {
+	l.q.push(Item{
 		Token: token.Error,
 		Pos:   l.n - 1, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
-	}
-	return l.EmitItem(i)
+	})
 }
 
 // Next returns the next rune in the input stream.
@@ -180,7 +154,7 @@ func (l *Lexer) Next() rune {
 		r = EOF
 	case err != nil:
 		r = EOF
-		defer l.err(l, err)
+		l.Errorf(err.Error())
 	}
 	l.n++
 	if r == '\n' {
@@ -220,7 +194,7 @@ func (l *Lexer) BackupN(n int) {
 	}
 }
 
-// Discard discards the current token
+// Discard discards the current token.
 //
 func (l *Lexer) Discard() {
 	l.B = l.B[:0]

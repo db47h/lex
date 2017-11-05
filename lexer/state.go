@@ -12,11 +12,12 @@ import (
 // Returns StateAny.
 //
 func StateEmitTokenNilValue(l *Lexer) StateFn {
-	return l.Emit(l.T, nil, StateAny)
+	l.Emit(l.T, nil)
+	return StateAny
 }
 
 // StateAny is the initial state function where any token is expected.
-// StateAny checks in order:
+// StateAny calls Discard, then checks the return value from Next in order:
 //
 // EOF: emits token.EOF and returns nil.
 //
@@ -30,9 +31,11 @@ func StateEmitTokenNilValue(l *Lexer) StateFn {
 // This order must be taken into account when building a Lang.
 //
 func StateAny(l *Lexer) StateFn {
+	l.Discard()
 	r := l.Next()
 	if r == EOF {
-		return l.Emit(token.EOF, nil, StateAny)
+		l.Emit(token.EOF, nil)
+		return StateEOF
 	}
 	if n := l.search(r); n != nil && n.s != nil {
 		l.T = n.t
@@ -42,7 +45,8 @@ func StateAny(l *Lexer) StateFn {
 		l.T = t
 		return f
 	}
-	return l.Emit(token.RawChar, r, StateAny)
+	l.Emit(token.RawChar, r)
+	return StateAny
 }
 
 // StateInt lexes an integer literal.
@@ -51,7 +55,8 @@ func StateInt(l *Lexer) StateFn {
 	if l.B[len(l.B)-1] == '0' {
 		return lexIntBase
 	}
-	return lexIntDigits(10, big.NewInt(int64(l.B[0]-'0')))
+	l.Backup()
+	return lexIntDigits(10)
 }
 
 // lexIntBase reads the character following a leading 0 in order to determine
@@ -61,24 +66,24 @@ func StateInt(l *Lexer) StateFn {
 //
 func lexIntBase(l *Lexer) StateFn {
 	r := l.Next()
-	switch {
-	case r >= '0' && r <= '9':
+	switch r {
+	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		// undo in order to let scanIntDigits read the whole number
 		// (except the leading 0) or error appropriately if r is >= 8
 		l.Backup()
-		return lexIntDigits(8, new(big.Int))
-	case r == 'x' || r == 'X':
-		return lexIntDigits(16, new(big.Int))
-	case r == 'b': // possible LocalLabel caught in scanIntDigits
-		return lexIntDigits(2, new(big.Int))
+		return lexIntDigits(8)
+	case 'x', 'X':
+		return lexIntDigits(16)
+	case 'b', 'B':
+		return lexIntDigits(2)
 	default:
 		l.Backup()
-		return l.Emit(l.T, &big.Int{}, StateAny)
+		l.Emit(l.T, &big.Int{})
+		return StateAny
 	}
 }
 
-// lexIntDigits returns a state function that scans the 2nd to n digit of an
-// int in the given base.
+// lexIntDigits returns a state function that scans the digits of an int in the given base.
 //
 // Supported bases are 2, 8, 10 and 16.
 //
@@ -87,9 +92,11 @@ func lexIntBase(l *Lexer) StateFn {
 // "0x" and "0b" followed by non-digits are not reported as errors, rather a "0" literal is
 // emitted and lexing resumes at 'x' or 'b' respecively.
 //
-func lexIntDigits(base int32, v *big.Int) StateFn {
+func lexIntDigits(base int32) StateFn {
 	return func(l *Lexer) StateFn {
 		var t big.Int
+		v := new(big.Int)
+		first := len(l.B) // position of first digit
 		for {
 			r := l.Next()
 			rl := unicode.ToLower(r)
@@ -105,35 +112,30 @@ func lexIntDigits(base int32, v *big.Int) StateFn {
 				continue
 			}
 			if rl >= base && rl <= 9 {
-				if err := l.Errorf("invalid character %#U in base %d immediate value", r, base); err != nil {
-					return nil
-				}
+				l.Errorf("invalid character %#U in base %d immediate value", r, base)
 				// skip remaining digits.
 				for r := l.Next(); r >= '0' && r <= '9'; r = l.Next() {
 				}
 				l.Backup()
-				l.Discard()
 				return StateAny
 			}
 			l.Backup()
-			return emitInt(l, base, v)
+			if (base == 2 || base == 16) && len(l.B)-first < 3 {
+				// undo the trailing 'x' or 'b'
+				l.Backup()
+			}
+			l.Emit(l.T, v)
+			return StateAny
 		}
 	}
 }
 
-// emitInt is the final stage of int lexing for ints with len > 1. It checks if the
-// immediate value is well-formed. (i.e the minimum amount of digits)
-// then emits the appropriate value(s).
+// StateEOF places the lexer in End-Of-File state.
+// Once in this state, the lexer will only emit EOF.
 //
-func emitInt(l *Lexer, base int32, value *big.Int) StateFn {
-	// len is at least 2 for bases 2 and 16. i.e. we've read at least
-	// "0b" or "0x").
-	sz := len(l.B)
-	if (base == 2 || base == 16) && sz < 3 {
-		// undo the trailing 'x' or 'b'
-		l.Backup()
-	}
-	return l.Emit(l.T, value, StateAny)
+func StateEOF(l *Lexer) StateFn {
+	l.Emit(token.EOF, nil)
+	return StateEOF
 }
 
 // StateString lexes a " terminated string.
@@ -148,12 +150,12 @@ func StateString(l *Lexer) StateFn {
 		case quote:
 			s, err := strconv.Unquote(l.TokenString())
 			if err != nil {
-				if err = l.Errorf(err.Error()); err != nil {
-					return nil
-				}
+				l.Errorf(err.Error())
 				return StateAny
 			}
-			return l.Emit(l.T, s, StateAny)
+			l.Emit(l.T, s)
+			return StateAny
+
 		case '\\':
 			r = l.Next()
 			if r != '\n' && r != EOF {
@@ -162,9 +164,7 @@ func StateString(l *Lexer) StateFn {
 			fallthrough
 		case '\n', EOF:
 			l.Backup()
-			if err := l.Errorf("unterminated string"); err != nil {
-				return nil
-			}
+			l.Errorf("unterminated string")
 			return StateAny // keep going
 		}
 	}

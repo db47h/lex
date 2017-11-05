@@ -58,9 +58,11 @@ func lexIdentifier(l *lexer.Lexer) lexer.StateFn {
 	// filter keywords
 	s := l.TokenString()
 	if i := sort.SearchStrings(keywords[:], s); i < len(keywords) && keywords[i] == s {
-		return l.Emit(token.Custom+token.Token(i), s, lexer.StateAny)
+		l.Emit(token.Custom+token.Token(i), s)
+	} else {
+		l.Emit(l.T, s)
 	}
-	return l.Emit(l.T, s, lexer.StateAny)
+	return lexer.StateAny
 }
 
 var lang lexer.Lang
@@ -76,18 +78,18 @@ func init() {
 	tokComment := lang.Match("//", func(l *lexer.Lexer) lexer.StateFn {
 		l.AcceptUpTo([]rune{'\n'})
 		l.Backup() // don't put trailing \n in comment
-		return l.Emit(l.T, l.TokenString(), lexer.StateAny)
+		l.Emit(l.T, l.TokenString())
+		return lexer.StateAny
 	})
 
 	// C style comment
 	lang.Match("/*", func(l *lexer.Lexer) lexer.StateFn {
 		if ok := l.AcceptUpTo([]rune("*/")); !ok {
-			if err := l.Errorf("unterminated block comment"); err != nil {
-				return nil
-			}
+			l.Errorf("unterminated block comment")
 			return lexer.StateAny
 		}
-		return l.Emit(tokComment, l.TokenString(), lexer.StateAny) // use same token as //
+		l.Emit(tokComment, l.TokenString()) // use same token as //
+		return lexer.StateAny
 	})
 
 	// Integers
@@ -100,17 +102,21 @@ func init() {
 	tokLeftParen := lang.Match("(", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
-		return l.Emit(l.T, nil, lexer.StateAny)
+		l.Emit(l.T, nil)
+		return lexer.StateAny
 	})
 	tokRightParen := lang.Match(")", lexer.StateEmitTokenNilValue)
+
 	// brackets
 	tokLeftBracket := lang.Match("[", lexer.StateEmitTokenNilValue)
 	tokRightBracket := lang.Match("]", lexer.StateEmitTokenNilValue)
+
 	// braces
 	tokLeftBrace := lang.Match("{", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
-		return l.Emit(l.T, nil, lexer.StateAny)
+		l.Emit(l.T, nil)
+		return lexer.StateAny
 	})
 	tokRightBrace := lang.Match("}", lexer.StateEmitTokenNilValue)
 
@@ -125,8 +131,9 @@ func init() {
 
 	// convert EOLs to ;
 	tokEOL := lang.MatchAny("\n;", func(l *lexer.Lexer) lexer.StateFn {
-		l.AcceptWhile(unicode.IsSpace)                     // eat all space, including additional EOLs
-		return l.Emit(l.T, string(l.B[0]), lexer.StateAny) // use only the first rune as value
+		l.AcceptWhile(unicode.IsSpace) // eat all space, including additional EOLs
+		l.Emit(l.T, string(l.B[0]))    // use only the first rune as value
+		return lexer.StateAny
 	})
 
 	// boolean filters
@@ -196,7 +203,7 @@ func ExampleLexer() {
 
 	// t := time.Now()
 	for i := l.Lex(); i.Token != token.EOF; i = l.Lex() {
-		// fmt.Println(f.Position(i.Pos).String(), tokenString(i))
+		fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
 	}
 	// fmt.Printf("%v\n", time.Since(t))
 
