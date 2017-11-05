@@ -1,6 +1,8 @@
 package lexer
 
-import "github.com/db47h/asm/token"
+import (
+	"github.com/db47h/asm/token"
+)
 
 type nodeList map[rune]*node
 
@@ -9,7 +11,7 @@ type nodeList map[rune]*node
 type node struct {
 	c nodeList // child nodes
 	s StateFn
-	t token.Token
+	t token.Type
 }
 
 // match returns the first child node that matches the given rune.
@@ -18,43 +20,68 @@ func (n *node) match(r rune) *node {
 	return n.c[r]
 }
 
-type filter struct {
-	m func(r rune) bool
-	s StateFn
-	t token.Token
-}
-
 // A Lang represents the tokens (terminals) used in a language.
 //
 type Lang struct {
-	last token.Token // last token id allocated in NewToken().
-	e    *node       // exact matches
-	b    []filter
+	i StateFn
+	e *node // exact matches
 }
 
-func (l *Lang) init() {
-	if l.e == nil {
-		l.e = &node{c: make(nodeList)}
-	}
-}
-
-// filter looks up the first registered MatchFn that returns true for the given rune.
+// NewLang returns a new language with initFn as its initial state function.
 //
-func (l *Lang) filter(r rune) (StateFn, token.Token) {
-	for i := range l.b {
-		if l.b[i].m(r) {
-			return l.b[i].s, l.b[i].t
+func NewLang(initFn StateFn) *Lang {
+	if initFn == nil {
+		initFn = func(l *Lexer) StateFn {
+			r := l.Next()
+			if r == EOF {
+				return stateEOF
+			}
+			l.Emit(token.RawChar, r)
+			return nil
 		}
 	}
-	return nil, token.Invalid
+	return &Lang{i: initFn, e: &node{c: make(nodeList)}}
 }
 
-// Match registers the state f for input starting with the string s.
-// When in its initial state, if the input matches s, it switches its state to f.
+func stateEOF(l *Lexer) StateFn {
+	l.Emit(token.EOF, nil)
+	return stateEOF
+}
+
+func (lang *Lang) doMatch(l *Lexer) StateFn {
+	var match *node
+	var i, mi int
+
+	r := l.Next()
+
+	for n := lang.e.match(r); n != nil; n = n.match(r) {
+		if n.s != nil {
+			mi = i
+			match = n
+		}
+		if len(n.c) == 0 || r == EOF {
+			// avoid unnecessary Next() / Backup() steps
+			break
+		}
+		i++
+		r = l.Next()
+	}
+
+	if match != nil {
+		l.BackupN(i - mi)
+		l.T = match.t
+		return match.s(l)
+	}
+
+	l.BackupN(i + 1)
+	return lang.i(l)
+}
+
+// MatchRunes registers the state f for input starting with the runes in s.
+// When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (l *Lang) Match(s string, f StateFn) token.Token {
-	l.init()
-	n := l.e
+func (lang *Lang) MatchRunes(t token.Type, s []rune, f StateFn) {
+	n := lang.e
 	for _, r := range s {
 		i, ok := n.c[r]
 		if !ok {
@@ -66,36 +93,28 @@ func (l *Lang) Match(s string, f StateFn) token.Token {
 	if n.s != nil {
 		panic("token registered twice")
 	}
-	l.last--
 	n.s = f
-	n.t = l.last
-	return l.last
+	n.t = t
 }
 
-// MatchAny registers the state f for input starting with any of the runes in the
-// string s.
+// Match registers the state f for input starting with the string s.
+// When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (l *Lang) MatchAny(s string, f StateFn) token.Token {
-	l.init()
-	c := l.e.c
-	l.last--
+func (lang *Lang) Match(t token.Type, s string, f StateFn) {
+	lang.MatchRunes(t, []rune(s), f)
+}
+
+// MatchAny registers the state f for input starting with any of the runes in s.
+//
+func (lang *Lang) MatchAny(t token.Type, s []rune, f StateFn) {
+	c := lang.e.c
 	for _, r := range s {
 		if n := c[r]; n != nil {
 			if n.s != nil {
 				panic("token registered twice")
 			}
 		} else {
-			c[r] = &node{c: make(nodeList), s: f, t: l.last}
+			c[r] = &node{c: make(nodeList), s: f, t: t}
 		}
 	}
-	return l.last
-}
-
-// MatchFn registers the state f for input where matchFn returns true for the first rune in a token.
-//
-func (l *Lang) MatchFn(matchFn func(r rune) bool, f StateFn) token.Token {
-	l.init()
-	l.last--
-	l.b = append(l.b, filter{m: matchFn, s: f, t: l.last})
-	return l.last
 }

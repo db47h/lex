@@ -1,29 +1,33 @@
 // Package token defines constants and types representing lexical tokens
-// in assembler source text.
+// as well as a wrapper for input files.
 //
 package token
 
-//go:generate stringer -type Token
+//go:generate stringer -type Type
 
-// Token represents a token's numeric ID
+// Type represents a token's type. Custom lexers can use token types
+// greater than zero.
 //
-type Token int
+type Type int
 
-// Token IDs
+// Reserved token IDs.
 //
 const (
-	Invalid Token = iota
-	EOF           // end of file
-	Error         // error -- the associated value is a string
-	RawChar       // unknown raw character
-	Custom        // any token value >= Custom may be used as custom tokens
+	Invalid Type = -1 - iota
+	EOF          // end of file
+	Error        // error -- the associated value is a string
+	RawChar      // unknown raw character
 )
 
-// Pos represents a token's position within a File
+// Pos represents a token's position within a File. This is a rune index rather than a byte index.
+// For error reporting, this is not really an issue even for editors that do not
+// support rune-indexing since after conversion to the line:column based
+// Position, the line number is accurate and the column might be off by only a
+// few bytes.
 //
 type Pos int
 
-// IsValid returns true if p is a valid position.
+// IsValid returns true if p is a valid position (i.e. p >= 0).
 //
 func (p Pos) IsValid() bool {
 	return p >= 0

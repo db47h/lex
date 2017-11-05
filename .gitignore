@@ -1,3 +1,4 @@
 .vscode/launch.json
 .vscode/settings.json
-debug.test
+*.test
+*.prof

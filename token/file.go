@@ -1,7 +1,6 @@
 package token
 
 import (
-	"errors"
 	"fmt"
 	"io"
 )
@@ -11,33 +10,25 @@ const (
 	mask  = (bufSz - 1)
 )
 
-var errBufferOverflow = errors.New("ring buffer overflow")
-
 // Position describes an arbitrary source position including the file, line, and column location.
 //
 type Position struct {
 	Filename string
-	Offset   int
-	Line     int
-	Column   int
+	Offset   int // rune index in the file
+	Line     int // 1-based line number
+	Column   int // 1-based column number (rune index)
 }
 
 func (p Position) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Filename, p.Line, p.Column)
 }
 
-// A File represents an input file.
+// A File represents an input file. It's a wrapper around an io.RuneReader that
+// handles file offset to line/column conversion.
 //
 type File struct {
-	name string
-	r    io.RuneReader
-	buf  [bufSz]struct {
-		r  rune
-		sz int
-	}
-	o int // output index
-	i int // input index
-
+	name  string
+	r     io.RuneReader
 	lines []Pos // 0-based line/Pos information
 }
 
@@ -60,33 +51,7 @@ func (f *File) Name() string {
 // ReadRune implements io.RuneReader
 //
 func (f *File) ReadRune() (r rune, sz int, err error) {
-	if f.o == f.i {
-		r, sz, err = f.r.ReadRune()
-		if err != nil && err != io.EOF {
-			return 0, 0, err
-		}
-		f.buf[f.i].r, f.buf[f.i].sz = r, sz
-		f.i = (f.i + 1) & mask
-		f.o = f.i
-		return
-	}
-	r, sz = f.buf[f.o].r, f.buf[f.o].sz
-	f.o = (f.o + 1) & mask
-	return
-}
-
-// UnreadRune implements io.RuneScanner.
-//
-// File uses a 256 runes ring buffer, so calling UnreadRune over 255 times in a
-// row without interleaved calls to ReadRune will return an error.
-//
-func (f *File) UnreadRune() error {
-	o := (f.o - 1) & mask
-	if o == f.i {
-		return errBufferOverflow
-	}
-	f.o = o
-	return nil
+	return f.r.ReadRune()
 }
 
 // AddLine adds the line offset for a new line. Note that the first line is

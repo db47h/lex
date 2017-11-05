@@ -55,7 +55,7 @@ const EOF = -1
 // Item represents a token returned from the lexer.
 //
 type Item struct {
-	token.Token
+	token.Type
 	token.Pos // Token start position within the file.
 	Value     interface{}
 }
@@ -66,28 +66,28 @@ type Item struct {
 func (i *Item) String() string {
 	switch v := i.Value.(type) {
 	case string:
-		return fmt.Sprintf("%s %s", i.Token, v)
+		return fmt.Sprintf("%v %s", i.Type, v)
 	case interface {
 		String() string
 	}:
-		return fmt.Sprintf("%s %s", i.Token, v.String())
+		return fmt.Sprintf("%v %s", i.Type, v.String())
 	default:
-		return i.Token.String()
+		return fmt.Sprintf("%v", i.Type) // i.Token.String()
 	}
 }
 
 // A Lexer holds the internal state of the lexer while processing a given text.
-// Note that the public member functions should only be accessed from custom StateFn
-// functions. Parsers should only call Lex() and Close().
+// Note that the public fields should only be accessed from custom StateFn
+// functions. Parsers should only call Lex().
 //
 type Lexer struct {
 	f     *token.File
-	l     *Lang
-	B     []rune      // token string buffer
-	s     token.Pos   // token start position
-	n     token.Pos   // position of next rune read
-	T     token.Token // current token guess
-	q     *queue      // Item queue
+	L     *Lang      // current language
+	T     token.Type // current token type
+	b     []rune     // token string buffer
+	s     token.Pos  // token start position
+	n     token.Pos  // position of next rune read
+	q     *queue     // Item queue
 	state StateFn
 }
 
@@ -101,10 +101,9 @@ type StateFn func(l *Lexer) StateFn
 func New(f *token.File, l *Lang) *Lexer {
 	return &Lexer{
 		f: f,
-		l: l,
+		L: l,
 		// initial q size must be an exponent of 2
-		q:     &queue{items: make([]Item, 1)},
-		state: StateAny,
+		q: &queue{items: make([]Item, 1)},
 	}
 }
 
@@ -113,7 +112,11 @@ func New(f *token.File, l *Lang) *Lexer {
 //
 func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
-		l.state = l.state(l)
+		if l.state == nil {
+			l.state = l.L.doMatch(l)
+		} else {
+			l.state = l.state(l)
+		}
 	}
 	return l.q.pop()
 }
@@ -126,33 +129,40 @@ func (l *Lexer) File() *token.File {
 
 // Emit emits a single token.
 //
-func (l *Lexer) Emit(t token.Token, value interface{}) {
+func (l *Lexer) Emit(t token.Type, value interface{}) {
 	l.q.push(Item{
-		Token: t,
+		Type:  t,
 		Pos:   l.s,
 		Value: value,
 	})
+	l.Discard()
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
-// of the error.
+// of the error and the position set to the position of the last rune read by Next().
 //
 func (l *Lexer) Errorf(format string, args ...interface{}) {
 	l.q.push(Item{
-		Token: token.Error,
+		Type:  token.Error,
 		Pos:   l.n - 1, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	})
+	l.Discard()
 }
 
 // Next returns the next rune in the input stream.
 //
 func (l *Lexer) Next() rune {
+	if sz := l.TokenLen(); sz < len(l.b) {
+		r := l.b[sz]
+		l.n++
+		return r
+	}
 	r, s, err := l.f.ReadRune()
 	switch {
-	case s == 0 || err == io.EOF:
+	case s == 0:
 		r = EOF
-	case err != nil:
+	case err != nil && err != io.EOF:
 		r = EOF
 		l.Errorf(err.Error())
 	}
@@ -160,76 +170,52 @@ func (l *Lexer) Next() rune {
 	if r == '\n' {
 		l.f.AddLine(l.n)
 	}
-	l.B = append(l.B, r)
+	l.b = append(l.b, r)
 	return r
 }
 
 // Backup reverts the last call to next().
 //
 func (l *Lexer) Backup() {
-	ln := len(l.B) - 1
-	if ln < 0 {
-		panic("invalid use of backup")
+	if l.n <= l.s {
+		panic("invalid use of Backup")
 	}
-	l.B = l.B[:ln]
 	l.n--
-	if err := l.f.UnreadRune(); err != nil {
-		panic(err)
-	}
 }
 
 // BackupN reverts multiple calls to Next().
 //
 func (l *Lexer) BackupN(n int) {
-	ln := len(l.B) - n
-	if ln < 0 {
-		panic("invalid use of undo")
+	if l.TokenLen() < n {
+		panic("invalid use of BackupN")
 	}
-	l.B = l.B[:ln]
 	l.n -= token.Pos(n)
-	for ; n > 0; n-- {
-		if err := l.f.UnreadRune(); err != nil {
-			panic(err)
-		}
-	}
 }
 
 // Discard discards the current token.
 //
 func (l *Lexer) Discard() {
-	l.B = l.B[:0]
+	l.b = l.b[:copy(l.b, l.b[l.TokenLen():])]
 	l.T = token.Invalid
 	l.s = l.n
+}
+
+// Token returns the current token as a rune slice.
+//
+func (l *Lexer) Token() []rune {
+	return l.b[:l.TokenLen()]
 }
 
 // TokenString returns a string representation of the current token.
 //
 func (l *Lexer) TokenString() string {
-	return string(l.B)
+	return string(l.b[:l.TokenLen()])
 }
 
-func (l *Lexer) search(r rune) *node {
-	var match *node
-	var i, mi = 0, 0
-
-	for n := l.l.e.match(r); n != nil; n = n.match(r) {
-		if n.s != nil {
-			mi = i
-			match = n
-		}
-		if len(n.c) == 0 {
-			// skip unnecessary Next() / Backup() steps
-			break
-		}
-		i++
-		r = l.Next()
-	}
-	// backup runes not part of the match
-	i -= mi
-	if i > 0 {
-		l.BackupN(i)
-	}
-	return match
+// TokenLen returns the length of the current token.
+//
+func (l *Lexer) TokenLen() int {
+	return int(l.n - l.s)
 }
 
 // AcceptWhile accepts input while the f function returns true.
@@ -242,10 +228,13 @@ func (l *Lexer) AcceptWhile(f func(r rune) bool) {
 	l.Backup()
 }
 
-// AcceptUpTo returns a StateFn that accepts input until it matches s.
+// AcceptUpTo accepts input until it finds an occurence of s.
 //
 func (l *Lexer) AcceptUpTo(s []rune) bool {
-	here := len(l.B)
+	if len(s) == 0 {
+		return true
+	}
+	here := l.TokenLen()
 	for {
 		r := l.Next()
 		if r == EOF {
@@ -253,7 +242,7 @@ func (l *Lexer) AcceptUpTo(s []rune) bool {
 			return false
 		}
 		var i, j int
-		for i, j = len(l.B)-1, len(s)-1; i >= here && j >= 0 && l.B[i] == s[j]; i, j = i-1, j-1 {
+		for i, j = l.TokenLen()-1, len(s)-1; i >= here && j >= 0 && l.b[i] == s[j]; i, j = i-1, j-1 {
 		}
 		if j < 0 {
 			return true
@@ -261,4 +250,45 @@ func (l *Lexer) AcceptUpTo(s []rune) bool {
 	}
 }
 
-// TODO: add `Accept([]rune) bool` (consumes it) and Expect([]rune) bool (does not consume)
+// Accept accepts input if it matches the contents of s.
+// Return true if a match was found.
+//
+func (l *Lexer) Accept(s []rune) bool {
+	var i int
+	if len(s) == 0 {
+		return true
+	}
+	for i = 0; i < len(s); i++ {
+		r := l.Next()
+		if r != s[i] {
+			break
+		}
+	}
+	if i == len(s) {
+		return true
+	}
+	l.BackupN(i + 1)
+	return false
+}
+
+// Expect checks that input matches the contents of s but does not
+// consume it.
+//
+func (l *Lexer) Expect(s []rune) bool {
+	var i int
+	if len(s) == 0 {
+		return false
+	}
+	for i = 0; i < len(s); i++ {
+		r := l.Next()
+		if r != s[i] {
+			break
+		}
+	}
+	if i == len(s) {
+		l.BackupN(i)
+		return true
+	}
+	l.BackupN(i + 1)
+	return false
+}

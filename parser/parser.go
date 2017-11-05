@@ -54,7 +54,7 @@ func tokString(i *lexer.Item) string {
 	}:
 		return v.String()
 	case nil:
-		return i.Token.String()
+		return fmt.Sprintf("%v", i.Type)
 	default:
 		panic(fmt.Errorf("unhandled token value type %T for %v", v, v))
 	}
@@ -129,7 +129,7 @@ func WrapPostfixFunc(prec int, f PostfixFunc) Left {
 // 	return w.f(p, i, lhs)
 // }
 
-var postfix = map[token.Token]Left{
+var postfix = map[token.Type]Left{
 // token.Comma:     {0, leftChain},
 // token.OpOr:      {1, leftBinOp},
 // token.OpXor:     {2, leftBinOp},
@@ -143,7 +143,7 @@ var postfix = map[token.Token]Left{
 // token.Error:     {100, leftError},
 }
 
-var prefix = map[token.Token]Null{
+var prefix = map[token.Type]Null{
 // token.Error:      tokenError{},
 // token.Identifier: NullFunc(Leaf),
 // token.Immediate:  NullFunc(Leaf),
@@ -187,7 +187,7 @@ func Leaf(p *Parser, i *lexer.Item) (*Node, error) {
 
 // SubExpression parses a sub expression ending with the given token.
 //
-func SubExpression(end token.Token) Null {
+func SubExpression(end token.Type) Null {
 	return NullFunc(func(p *Parser, i *lexer.Item) (*Node, error) {
 		inner, err := p.parseExpr(0)
 		if err != nil {
@@ -260,8 +260,8 @@ type Parser struct {
 	f    *token.File
 	l    *lexer.Lexer
 	n    *lexer.Item
-	post map[token.Token]Left
-	pre  map[token.Token]Null
+	post map[token.Type]Left
+	pre  map[token.Type]Null
 }
 
 func NewParser(f *token.File) *Parser {
@@ -295,7 +295,7 @@ func (p *Parser) ParseExpr() (*Node, error) {
 //
 func (p *Parser) expectEndOfExpr() error {
 	i := p.nextNonSpace()
-	switch i.Token {
+	switch i.Type {
 	// case token.Comma:
 	// 	p.putBack(i)
 	// 	return nil
@@ -311,9 +311,9 @@ func (p *Parser) expectEndOfExpr() error {
 	}
 }
 
-func (p *Parser) expect(tok token.Token) (i *lexer.Item, ok bool) {
+func (p *Parser) expect(tok token.Type) (i *lexer.Item, ok bool) {
 	i = p.nextNonSpace()
-	if i.Token != tok {
+	if i.Type != tok {
 		p.putBack(i)
 		return i, false
 	}
@@ -344,7 +344,7 @@ func (p *Parser) putBack(i *lexer.Item) {
 	p.n = i
 }
 
-func (p *Parser) lookupPrefix(t token.Token) Null {
+func (p *Parser) lookupPrefix(t token.Type) Null {
 	pf := p.pre[t]
 	if pf != nil {
 		return pf
@@ -362,7 +362,7 @@ var pfNotFound = WrapPostfixFunc(minPrec, func(p *Parser, i *lexer.Item, _ *Node
 	return nil, &ParseError{f: p.f, i: i, e: errUnexpectedToken}
 })
 
-func (p *Parser) lookupPostfix(t token.Token) Left {
+func (p *Parser) lookupPostfix(t token.Type) Left {
 	pf := p.post[t]
 	if pf != nil {
 		return pf
@@ -378,7 +378,7 @@ func (p *Parser) lookupPostfix(t token.Token) Left {
 func (p *Parser) parseExpr(rbp int) (*Node, error) {
 	// primary
 	i := p.nextNonSpace()
-	pr := p.lookupPrefix(i.Token)
+	pr := p.lookupPrefix(i.Type)
 	n, err := pr.NuD(p, i)
 	if err != nil {
 		return nil, err
@@ -386,7 +386,7 @@ func (p *Parser) parseExpr(rbp int) (*Node, error) {
 	//
 	for {
 		i = p.nextNonSpace()
-		po := p.lookupPostfix(i.Token)
+		po := p.lookupPostfix(i.Type)
 		if po.LBP() < rbp {
 			p.putBack(i)
 			return n, nil
