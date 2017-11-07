@@ -1,15 +1,24 @@
-// Package lexer implements a customizable lexer.
+// Package lexer implements a configurable lexer.
 //
-// The lexer state is implemented as state functions and it supports asynchronous
-// token emission.
+// The lexer state is implemented with state functions and it supports
+// asynchronous token emission.
 //
-// Besides the fact that it can be customized, the implementation is similar to
-// https://golang.org/src/text/template/parse/lex.go.
+// The implementation is similar to https://golang.org/src/text/template/parse/lex.go.
 // Se also Rob Pike's talk about it: https://talks.golang.org/2011/lex.slide.
-// The key difference with the lexer in the Go template package is that it does
-// not use Go channels to emit tokens. The asynchronous token emission is
-// implemented via a FIFO queue. This is about 5 to 6 times faster than channels
-// in this specific case (channels are great, just not here).
+//
+// The key difference with the lexer of the Go text template package is that the
+// asynchronous token emission is implemented with a FIFO queue instead of using
+// Go channels. Benchmarks with an earlier implementation that used a channel
+// showed that the using FIFO is about 5 times faster.
+//
+// The drawback of using a FIFO is that once Emit() has been called from a state
+// function, the sent item will be received by the caller (parser) only when the
+// state function returns, so it must return as soon as possible.
+//
+// It performs at about a third of the speed of the Go lexer (for Go source
+// code) and it's on-par with the Go text template lexer where the performance
+// gain from using a FIFO is counter-balanced by the language configuration
+// overhead.
 //
 package lexer
 
@@ -60,8 +69,8 @@ type Item struct {
 	Value     interface{}
 }
 
-// String returns a string representation of the item. This should be used only for debugging purposes as
-// the output format is not guaranteed to be stable.
+// String returns a string representation of the item. This should be used only
+// for debugging purposes as the output format is not guaranteed to be stable.
 //
 func (i *Item) String() string {
 	switch v := i.Value.(type) {
@@ -91,8 +100,8 @@ type Lexer struct {
 	state StateFn
 }
 
-// A StateFn is a state function. When a StateFn is called, the input that lead top that
-// state has already been scanned.
+// A StateFn is a state function. When a StateFn is called, the input that lead
+// to that state has already been scanned and can be retrieved with Lexer.Token().
 //
 type StateFn func(l *Lexer) StateFn
 
@@ -107,8 +116,7 @@ func New(f *token.File, l *Lang) *Lexer {
 	}
 }
 
-// Lex reads source text and returns the next item until EOF. Once this
-// function has returned an EOF token, any further calls to it will panic.
+// Lex reads source text and returns the next item until EOF.
 //
 func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {

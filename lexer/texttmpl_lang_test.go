@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -211,7 +212,7 @@ func initTmplLang() *lexer.Lang {
 			return nil
 		case unicode.IsSpace(r):
 			l.AcceptWhile(unicode.IsSpace)
-			l.Emit(itemSpace, ' ')
+			l.Emit(itemSpace, " ")
 			return nil
 		}
 
@@ -235,16 +236,18 @@ func initTmplLang() *lexer.Lang {
 	s.langAction.Match(token.Invalid, "}}", s.rightDelim(false))
 
 	// match field or variable
-	s.langAction.MatchAny(itemDot, []rune("$."), func(l *lexer.Lexer) lexer.StateFn {
-		if l.Token()[0] == '$' {
-			l.T = itemVariable
-		}
+	s.langAction.MatchAny(itemVariable, []rune("$."), func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
 		if unicode.IsLetter(r) || r == '_' {
-			l.T = itemVariable
+			if l.Token()[0] == '.' {
+				l.T = itemField
+			}
 			l.AcceptWhile(isAlphaNumeric)
 			l.Emit(l.T, l.TokenString())
 			return nil
+		}
+		if l.Token()[0] == '.' {
+			l.T = itemDot
 		}
 		l.Backup()
 		l.Emit(l.T, l.TokenString())
@@ -269,7 +272,31 @@ func initTmplLang() *lexer.Lang {
 	return s.langText
 }
 
-func Test_text_template(t *testing.T) {
+// End of language specification
+
+//
+// Tests
+//
+
+// convoluted item stringer to match test data
+func tmplTokString(i token.Type, v interface{}) string {
+	s, isString := v.(string)
+	switch {
+	case i == token.EOF:
+		return "EOF"
+	case i == token.Error:
+		return s
+	case i > itemKeyword:
+		return fmt.Sprintf("<%s>", s)
+	case i == itemString:
+		return strconv.Quote(s)
+	case isString && len(s) > 10:
+		return fmt.Sprintf("%.10q...", s)
+	}
+	return fmt.Sprintf("%q", v)
+}
+
+func TestLexer_text_template(t *testing.T) {
 	f, err := os.Open("testdata/slides.tmpl")
 	if err != nil {
 		t.Fatal(err)
@@ -277,12 +304,16 @@ func Test_text_template(t *testing.T) {
 	defer f.Close()
 
 	l := lexer.New(token.NewFile("slides.tmpl", bufio.NewReader(f)), initTmplLang())
-	for {
-		i := l.Lex()
-		if i.Type == token.EOF {
+	for i := 0; ; i++ {
+		it := l.Lex()
+		if it.Type == token.EOF {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "%d:%d %q\n", l.File().Position(i.Pos).Line, i.Pos, i.Value)
+		p := fmt.Sprintf("%d", l.File().Position(it.Pos).Line)
+		s := tmplTokString(it.Type, it.Value)
+		if d := tmplResultData[i]; d.pos != p || d.s != s || d.t != it.Type {
+			t.Fatalf("Got: %s %d %q\nExpected: %s %d %q", p, it.Type, s, d.pos, d.t, d.s)
+		}
 	}
 }
 

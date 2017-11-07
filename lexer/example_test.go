@@ -238,10 +238,10 @@ func ExampleLexer() {
 
 	// t := time.Now()
 	for i := l.Lex(); i.Type != token.EOF; i = l.Lex() {
-		fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
+		// fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
 	}
-	i := l.Lex()
-	fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
+	// i := l.Lex()
+	// fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
 	// fmt.Printf("%v\n", time.Since(t))
 
 	// Output:
