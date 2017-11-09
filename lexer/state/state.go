@@ -2,8 +2,8 @@ package state
 
 import (
 	"math/big"
-	"strconv"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
@@ -118,33 +118,167 @@ func EOF(l *lexer.Lexer) lexer.StateFn {
 	return EOF
 }
 
-// String lexes a " terminated string.
-// TODO: split this in a helper function (akin to AcceptXXX) that matches a terminating quote
-// not preceeded by an escape char "\"
-// Also unquote reports just "invalid syntax", that's a pita.
-func String(l *lexer.Lexer) lexer.StateFn {
-	quote := l.Token()[0]
-	for {
-		r := l.Next()
-		switch r {
-		case quote:
-			s, err := strconv.Unquote(l.TokenString())
-			if err != nil {
-				l.Errorf(err.Error())
-				return nil
-			}
-			l.Emit(l.T, s)
-			return nil
+const (
+	errEnd     = -2
+	errRawByte = -1
+	errNone    = iota
+	errEOL
+	errInvalidEscape
+	errInvalidRune
+	errInvalidHex
+	errInvalidOctal
+)
 
-		case '\\':
-			if r = l.Next(); r != '\n' && r != lexer.EOF {
-				continue
+var msg = [...]string{
+	errNone:          "",
+	errEOL:           "unterminated string",
+	errInvalidEscape: "unknown escape sequence",
+	errInvalidRune:   "escape sequence is invalid Unicode code point",
+	errInvalidHex:    "non-hex character in escape sequence: %#U",
+	errInvalidOctal:  "non-octal character in escape sequence: %#U",
+}
+
+// String lexes a Go string literal. The delimiter has already been read and
+// will be reused as end-delimiter.
+//
+func String(l *lexer.Lexer) lexer.StateFn {
+	quote := l.Last()
+	s := make([]byte, 0, 64)
+	var rb [utf8.UTFMax]byte
+	for {
+		r, err := readChar(l, quote)
+		switch err {
+		case errNone:
+			if r <= utf8.RuneSelf {
+				s = append(s, byte(r))
+			} else {
+				s = append(s, rb[:utf8.EncodeRune(rb[:], r)]...)
 			}
-			fallthrough
-		case '\n', lexer.EOF:
+		case errRawByte:
+			s = append(s, byte(r))
+		case errEnd:
+			l.Emit(l.T, string(s))
+			return nil
+		case errEOL:
 			l.Backup()
-			l.Errorf("unterminated string")
+			l.Emit(l.T, string(s))
+			l.Errorf(msg[errEOL])
 			return nil // keep going
+		case errInvalidEscape, errInvalidRune:
+			l.Emit(l.T, string(s))
+			l.Errorf(msg[err])
+			return terminateString(l, quote)
+		case errInvalidHex, errInvalidOctal:
+			r := l.Last()
+			l.Emit(l.T, string(s))
+			l.Errorf(msg[err], r)
+			return terminateString(l, quote)
 		}
 	}
+}
+
+// just eat up string and look for end quote not preceded by '\'
+func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		for {
+			r := l.Next()
+			switch r {
+			case quote:
+				l.Discard()
+				return nil
+			case '\\':
+				r = l.Next()
+				if r != '\n' && r != lexer.EOF {
+					continue
+				}
+				fallthrough
+			case '\n', lexer.EOF:
+				l.Backup()
+				l.Errorf(msg[errEOL])
+				return nil
+			}
+		}
+	}
+}
+
+func readChar(l *lexer.Lexer, quote rune) (r rune, err int) {
+	r = l.Next()
+	switch r {
+	case quote:
+		return r, errEnd
+	case '\\':
+		r = l.Next()
+		switch r {
+		case 'a':
+			return '\a', errNone
+		case 'b':
+			return '\b', errNone
+		case 'f':
+			return '\f', errNone
+		case 'n':
+			return '\n', errNone
+		case 'r':
+			return '\r', errNone
+		case 't':
+			return '\t', errNone
+		case 'v':
+			return '\v', errNone
+		case '\\':
+			return '\\', errNone
+		case quote:
+			return r, errNone
+		case 'U':
+			r, err := readDigits(l, 8, 16)
+			if err == errNone && !utf8.ValidRune(r) {
+				return utf8.RuneError, errInvalidRune
+			}
+			return r, err
+		case 'u':
+			r, err := readDigits(l, 4, 16)
+			if err == errNone && !utf8.ValidRune(r) {
+				return utf8.RuneError, errInvalidRune
+			}
+			return r, err
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'x':
+			if r == 'x' {
+				r, err = readDigits(l, 2, 16)
+			} else {
+				l.Backup()
+				r, err = readDigits(l, 3, 8)
+			}
+			if err == errNone {
+				err = errRawByte
+			}
+			return r, err
+		case '\n', lexer.EOF:
+			return r, errEOL
+		default:
+			return r, errInvalidEscape
+		}
+	case '\n', lexer.EOF:
+		return r, errEOL
+	}
+	return r, errNone
+}
+
+func readDigits(l *lexer.Lexer, n, b int32) (v rune, err int) {
+	for i := int32(0); i < n; i++ {
+		r := l.Next()
+		if r == '\n' || r == lexer.EOF {
+			return v, errEOL
+		}
+		rl := unicode.ToLower(r)
+		if rl >= 'a' {
+			rl -= 'a' - '0' - 10
+		}
+		rl -= '0'
+		if rl < 0 || rl >= b {
+			if b == 8 {
+				return v, errInvalidOctal
+			}
+			return v, errInvalidHex
+		}
+		v = v*b + rl
+	}
+	return v, errNone
 }

@@ -3,9 +3,11 @@ package state_test
 import (
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/lexer/state"
@@ -66,12 +68,14 @@ func itemString(l *lexer.Lexer, i *lexer.Item) string {
 	case tokIdentifier:
 		return s + "IDENT " + i.Value.(string)
 	case tokString:
-		return s + "STRING " + i.Value.(string)
+		return s + "STRING " + strconv.Quote(i.Value.(string))
 	case tokColon:
 		return s + "COLON"
 	}
 	panic("unknown type")
 }
+
+// var r = '�'
 
 func Test_all(t *testing.T) {
 	var td = []struct {
@@ -79,6 +83,21 @@ func Test_all(t *testing.T) {
 		in   string
 		res  res
 	}{
+		{"str1", `"abcd\"\\\a\b\f\n\r\v\t"`, res{`1:1 STRING "abcd\"\\\a\b\f\n\r\v\t"`}},
+		{"str2", `"\xcC"`, res{`1:1 STRING "\xcc"`}},
+		{"str3", `"\U0010FFFF \u2224"`, res{`1:1 STRING "\U0010ffff ∤"`}},
+		{"str4", `"a\UFFFFFFFF" "\ud800 " "x\ud800\"\`, res{
+			`1:1 STRING "a"`,
+			`1:12 Error escape sequence is invalid Unicode code point`,
+			`1:15 STRING ""`,
+			`1:21 Error escape sequence is invalid Unicode code point`,
+			`1:25 STRING "x"`,
+			`1:32 Error escape sequence is invalid Unicode code point`,
+			`1:35 Error unterminated string`,
+		}},
+		{"str5", `"a`, res{`1:1 STRING "a"`, `1:2 Error unterminated string`}},
+		{"str6", `"\x2X"`, res{`1:1 STRING ""`, `1:5 Error non-hex character in escape sequence: U+0058 'X'`}},
+		{"str7", `"\277" "\28"`, res{`1:1 STRING "\xbf"`, `1:8 STRING ""`, `1:11 Error non-octal character in escape sequence: U+0038 '8'`}},
 		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
 		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:17 INT 0", "1:18 IDENT b"}},
 		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:17 INT 0", "1:18 IDENT x"}},
@@ -96,7 +115,7 @@ func Test_all(t *testing.T) {
 				}
 			}
 			it = l.Lex()
-			if it.Type != token.EOF {
+			if it.Type != token.EOF || int(it.Pos) != utf8.RuneCountInString(sample.in) {
 				t.Errorf("Got: %s, Expected: EOF", itemString(l, &it))
 			}
 		})
