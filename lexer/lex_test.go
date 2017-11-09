@@ -1,8 +1,7 @@
 package lexer_test
 
 // func tokenString(f *token.File, i *lexer.Item) string {
-// 	line, col := f.Position(i.Pos)
-// 	return fmt.Sprintf("%d:%d: %s", line, col, i.String())
+// 	return fmt.Sprintf("%v: %s", f.Position(i.Pos), i.String())
 // }
 
 // func isSeparator(t token.Token, r rune) bool {

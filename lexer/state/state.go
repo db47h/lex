@@ -9,27 +9,30 @@ import (
 	"github.com/db47h/asm/token"
 )
 
-// EmitTokenNil emits the current token with a nil value.
+// EmitNil just emits the current token with a nil value.
 //
-func EmitTokenNil(l *lexer.Lexer) lexer.StateFn {
+func EmitNil(l *lexer.Lexer) lexer.StateFn {
 	l.Emit(l.T, nil)
 	return nil
 }
 
-// EmitTokenString emits the current token with a string value.
+// EmitString just emits the current token with a string value.
 //
-func EmitTokenString(l *lexer.Lexer) lexer.StateFn {
+func EmitString(l *lexer.Lexer) lexer.StateFn {
 	l.Emit(l.T, l.TokenString())
 	return nil
 }
 
-// Int lexes an integer literal.
+// Int lexes an integer literal then emits it as a *big.Int.
+// This function expects that the first digit has already been read.
+//
+// Integers are expected to start with a leading 0 for base 8, "0x" for base 16
+// and "0b" for base 2.
 //
 func Int(l *lexer.Lexer) lexer.StateFn {
-	if t := l.Token(); t[len(t)-1] == '0' {
+	if l.Last() == '0' {
 		return lexIntBase
 	}
-	l.Backup()
 	return IntDigits(10)
 }
 
@@ -44,11 +47,12 @@ func lexIntBase(l *lexer.Lexer) lexer.StateFn {
 	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		// undo in order to let scanIntDigits read the whole number
 		// (except the leading 0) or error appropriately if r is >= 8
-		l.Backup()
 		return IntDigits(8)
 	case 'x', 'X':
+		l.Next() // consume first digit
 		return IntDigits(16)
 	case 'b', 'B':
+		l.Next() // consume first digit
 		return IntDigits(2)
 	default:
 		l.Backup()
@@ -57,7 +61,8 @@ func lexIntBase(l *lexer.Lexer) lexer.StateFn {
 	}
 }
 
-// IntDigits returns a state function that scans the digits of an int in the given base.
+// IntDigits returns a state function that lexes the digits of an int in the
+// given base. This function expects that the first digit has been read.
 //
 // Supported bases are 2, 8, 10 and 16.
 //
@@ -70,20 +75,20 @@ func IntDigits(base int32) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		var t big.Int
 		v := new(big.Int)
-		var dc int
+		here := l.TokenLen()
+		r := l.Last()
 		for {
-			r := l.Next()
 			rl := unicode.ToLower(r)
 			if rl >= 'a' {
-				rl -= 'a' - '0' + 10
+				rl -= 'a' - '0' - 10
 			}
 			rl -= '0'
 			if rl >= 0 && rl < base {
-				dc++
 				t.SetInt64(int64(base))
 				v = v.Mul(v, &t)
 				t.SetInt64(int64(rl))
 				v = v.Add(v, &t)
+				r = l.Next()
 				continue
 			}
 			if rl >= base && rl <= 9 {
@@ -95,7 +100,7 @@ func IntDigits(base int32) lexer.StateFn {
 				return nil
 			}
 			l.Backup()
-			if (base == 2 || base == 16) && dc == 0 {
+			if (base == 2 || base == 16) && here > l.TokenLen() {
 				// undo the trailing 'x' or 'b'
 				l.Backup()
 			}

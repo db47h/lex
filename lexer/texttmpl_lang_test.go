@@ -165,7 +165,7 @@ func (s *tmplState) rightDelim(trim bool) lexer.StateFn {
 func (s *tmplState) leftParen() lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s.parenDepth++
-		return state.EmitTokenString
+		return state.EmitString
 	}
 }
 
@@ -174,7 +174,7 @@ func (s *tmplState) leftParen() lexer.StateFn {
 func (s *tmplState) rightParen() lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s.parenDepth--
-		return state.EmitTokenString
+		return state.EmitString
 	}
 }
 
@@ -261,13 +261,13 @@ func initTmplLang() *lexer.Lang {
 	s.langAction.Match(itemLeftParen, "(", s.leftParen())
 	s.langAction.Match(itemRightParen, ")", s.rightParen())
 
-	s.langAction.Match(itemColonEquals, ":=", state.EmitTokenString)
+	s.langAction.Match(itemColonEquals, ":=", state.EmitString)
 
 	// numbers
 	s.langAction.MatchAny(itemNumber, []rune("0123456789"), state.Int)
 
 	// pipe
-	s.langAction.Match(itemPipe, "|", state.EmitTokenString)
+	s.langAction.Match(itemPipe, "|", state.EmitString)
 
 	return s.langText
 }

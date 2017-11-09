@@ -176,11 +176,11 @@ func init() {
 		l.Emit(l.T, nil)
 		return nil
 	})
-	lang.Match(tokRightParen, ")", state.EmitTokenNil)
+	lang.Match(tokRightParen, ")", state.EmitNil)
 
 	// brackets
-	lang.Match(tokLeftBracket, "[", state.EmitTokenNil)
-	lang.Match(tokRightBracket, "]", state.EmitTokenNil)
+	lang.Match(tokLeftBracket, "[", state.EmitNil)
+	lang.Match(tokRightBracket, "]", state.EmitNil)
 
 	// braces
 	lang.Match(tokLeftBrace, "{", func(l *lexer.Lexer) lexer.StateFn {
@@ -189,16 +189,16 @@ func init() {
 		l.Emit(l.T, nil)
 		return nil
 	})
-	lang.Match(tokRightBrace, "}", state.EmitTokenNil)
+	lang.Match(tokRightBrace, "}", state.EmitNil)
 
 	// assignment
-	lang.Match(tokVar, ":=", state.EmitTokenNil)
+	lang.Match(tokVar, ":=", state.EmitNil)
 
 	// comma
-	lang.Match(tokComma, ",", state.EmitTokenNil)
+	lang.Match(tokComma, ",", state.EmitNil)
 
 	// dot
-	lang.Match(tokDot, ".", state.EmitTokenNil)
+	lang.Match(tokDot, ".", state.EmitNil)
 
 	// convert EOLs to ;
 	lang.MatchAny(tokEOL, []rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
@@ -209,7 +209,7 @@ func init() {
 
 }
 
-func tokenString(i *lexer.Item) string {
+func goTokenString(i *lexer.Item) string {
 	s := tokens[i.Type]
 	if s == "" {
 		s = fmt.Sprintf("%v", i.Type)

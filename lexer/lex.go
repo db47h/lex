@@ -226,6 +226,13 @@ func (l *Lexer) TokenLen() int {
 	return int(l.n - l.s)
 }
 
+// Last returns the last rune read. May panic if called without a previous call
+// to Next() since the last Discard(), Emit() or Errorf().
+//
+func (l *Lexer) Last() rune {
+	return l.b[l.TokenLen()-1]
+}
+
 // AcceptWhile accepts input while the f function returns true.
 //
 // The first rune for which f will return false will not be included in the token.
