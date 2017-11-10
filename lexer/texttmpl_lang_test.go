@@ -255,7 +255,7 @@ func initTmplLang() *lexer.Lang {
 	})
 
 	// strings
-	s.langAction.Match(itemString, "\"", state.String)
+	s.langAction.Match(itemString, "\"", state.QuotedString)
 
 	// left/right paren
 	s.langAction.Match(itemLeftParen, "(", s.leftParen())

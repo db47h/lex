@@ -167,7 +167,7 @@ func init() {
 	lang.MatchAny(tokInt, []rune("0123456789"), state.Int)
 
 	// strings
-	lang.Match(tokString, "\"", state.String)
+	lang.Match(tokString, "\"", state.QuotedString)
 
 	// parens
 	lang.Match(tokLeftParen, "(", func(l *lexer.Lexer) lexer.StateFn {

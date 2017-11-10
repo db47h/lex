@@ -127,24 +127,30 @@ const (
 	errInvalidRune
 	errInvalidHex
 	errInvalidOctal
+	errSize
+	errEmpty
 )
 
 var msg = [...]string{
 	errNone:          "",
-	errEOL:           "unterminated string",
+	errEOL:           "unterminated %s",
 	errInvalidEscape: "unknown escape sequence",
 	errInvalidRune:   "escape sequence is invalid Unicode code point",
 	errInvalidHex:    "non-hex character in escape sequence: %#U",
 	errInvalidOctal:  "non-octal character in escape sequence: %#U",
+	errSize:          "invalid character literal (more than 1 character)",
+	errEmpty:         "empty character literal or unescaped %c in character literal",
 }
 
-// String lexes a Go string literal. The delimiter has already been read and
+// QuotedString lexes a Go string literal.
+//
+// When entering the StateFn, the starting delimiter has already been read and
 // will be reused as end-delimiter.
 //
-func String(l *lexer.Lexer) lexer.StateFn {
-	quote := l.Last()
+func QuotedString(l *lexer.Lexer) lexer.StateFn {
 	s := make([]byte, 0, 64)
 	var rb [utf8.UTFMax]byte
+	quote := l.Last()
 	for {
 		r, err := readChar(l, quote)
 		switch err {
@@ -161,23 +167,56 @@ func String(l *lexer.Lexer) lexer.StateFn {
 			return nil
 		case errEOL:
 			l.Backup()
-			l.Emit(l.T, string(s))
-			l.Errorf(msg[errEOL])
+			l.Errorf(msg[errEOL], "string")
 			return nil // keep going
 		case errInvalidEscape, errInvalidRune:
-			l.Emit(l.T, string(s))
 			l.Errorf(msg[err])
 			return terminateString(l, quote)
 		case errInvalidHex, errInvalidOctal:
-			r := l.Last()
-			l.Emit(l.T, string(s))
-			l.Errorf(msg[err], r)
+			l.Errorf(msg[err], l.Last())
 			return terminateString(l, quote)
 		}
 	}
 }
 
+// QuotedChar lexes a Go character literal.
+//
+// When entering the StateFn, the starting delimiter has already been read and
+// will be reused as end-delimiter.
+//
+func QuotedChar(l *lexer.Lexer) lexer.StateFn {
+	quote := l.Last()
+	r, err := readChar(l, quote)
+	switch err {
+	case errNone, errRawByte:
+		n := l.Next()
+		if n == quote {
+			l.Emit(l.T, r)
+			return nil
+		}
+		l.Backup() // undo a potential EOF/EOL
+		l.Errorf(msg[errSize])
+		return terminateString(l, quote)
+	case errEnd:
+		l.Errorf(msg[errEmpty], quote)
+		return nil
+	case errEOL:
+		l.Backup()
+		l.Errorf(msg[errEOL], "character literal")
+		return nil // keep going
+	case errInvalidEscape, errInvalidRune:
+		l.Errorf(msg[err])
+		return terminateString(l, quote)
+	case errInvalidHex, errInvalidOctal:
+		l.Errorf(msg[err], l.Last())
+		return terminateString(l, quote)
+	default:
+		panic("unexpected return value from readChar")
+	}
+}
+
 // just eat up string and look for end quote not preceded by '\'
+// TODO: if the rune that caused the error is a \, then our \ handling is off.
 func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		for {
@@ -193,8 +232,10 @@ func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
 				}
 				fallthrough
 			case '\n', lexer.EOF:
+				// unterminated string. Just ignore the error since
+				// this function is already called on error.
 				l.Backup()
-				l.Errorf(msg[errEOL])
+				l.Discard()
 				return nil
 			}
 		}

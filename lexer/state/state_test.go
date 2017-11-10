@@ -20,10 +20,11 @@ const (
 	tokInt token.Type = iota
 	tokIdentifier
 	tokString
+	tokChar
 	tokColon
 )
 
-// define a simple language with Go-like identifiers, strings, numbers,
+// define a simple language with Go-like identifiers, strings, chars, numbers,
 // ":" has its own token type, everything else is emitted as token.RawChar
 func init() {
 	lang = lexer.NewLang(func(l *lexer.Lexer) lexer.StateFn {
@@ -50,7 +51,8 @@ func init() {
 
 	lang.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
 	lang.MatchAny(tokInt, []rune("0123456789"), state.Int)
-	lang.Match(tokString, "\"", state.String)
+	lang.Match(tokString, "\"", state.QuotedString)
+	lang.Match(tokChar, "'", state.QuotedChar)
 	lang.Match(tokColon, ":", state.EmitNil)
 }
 
@@ -69,6 +71,8 @@ func itemString(l *lexer.Lexer, i *lexer.Item) string {
 		return s + "IDENT " + i.Value.(string)
 	case tokString:
 		return s + "STRING " + strconv.Quote(i.Value.(string))
+	case tokChar:
+		return s + "CHAR " + strconv.QuoteRune(i.Value.(rune))
 	case tokColon:
 		return s + "COLON"
 	}
@@ -87,17 +91,22 @@ func Test_all(t *testing.T) {
 		{"str2", `"\xcC"`, res{`1:1 STRING "\xcc"`}},
 		{"str3", `"\U0010FFFF \u2224"`, res{`1:1 STRING "\U0010ffff ∤"`}},
 		{"str4", `"a\UFFFFFFFF" "\ud800 " "x\ud800\"\`, res{
-			`1:1 STRING "a"`,
 			`1:12 Error escape sequence is invalid Unicode code point`,
-			`1:15 STRING ""`,
 			`1:21 Error escape sequence is invalid Unicode code point`,
-			`1:25 STRING "x"`,
 			`1:32 Error escape sequence is invalid Unicode code point`,
-			`1:35 Error unterminated string`,
 		}},
-		{"str5", `"a`, res{`1:1 STRING "a"`, `1:2 Error unterminated string`}},
-		{"str6", `"\x2X"`, res{`1:1 STRING ""`, `1:5 Error non-hex character in escape sequence: U+0058 'X'`}},
-		{"str7", `"\277" "\28"`, res{`1:1 STRING "\xbf"`, `1:8 STRING ""`, `1:11 Error non-octal character in escape sequence: U+0038 '8'`}},
+		{"str5", `"a`, res{`1:2 Error unterminated string`}},
+		{"str6", `"\x2X"`, res{`1:5 Error non-hex character in escape sequence: U+0058 'X'`}},
+		{"str7", `"\277" "\28"`, res{`1:1 STRING "\xbf"`, `1:11 Error non-octal character in escape sequence: U+0038 '8'`}},
+		{"str8", `"\w"`, res{`1:3 Error unknown escape sequence`}},
+		{"str9", "\"a\n", res{`1:2 Error unterminated string`}},
+		{"str10", "\"a\\\n", res{`1:3 Error unterminated string`}},
+		{"str11", "\"\\21\n", res{`1:4 Error unterminated string`}},
+		{"char1", `'a' ''`, res{`1:1 CHAR 'a'`, `1:6 Error empty character literal or unescaped ' in character literal`}},
+		{"char2", `'aa'`, res{`1:2 Error invalid character literal (more than 1 character)`}},
+		{"char4", `'\z' '
+			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
+		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
 		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:17 INT 0", "1:18 IDENT b"}},
 		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:17 INT 0", "1:18 IDENT x"}},
@@ -111,7 +120,7 @@ func Test_all(t *testing.T) {
 				it = l.Lex()
 				got := itemString(l, &it)
 				if got != sample.res[i] {
-					t.Errorf("Got: %v, Expected: %v", got, sample.res[i])
+					t.Errorf("\nGot     : %v\nExpected: %v", got, sample.res[i])
 				}
 			}
 			it = l.Lex()
