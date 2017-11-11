@@ -207,6 +207,7 @@ func Test_floats(t *testing.T) {
 	var td = []testData{
 		{`float1`, `1.23`, res{`1:1 FLOAT 1.23`}},
 		{`float2`, `10.e3`, res{`1:1 FLOAT 10000`}},
+		{`float2b`, `10.`, res{`1:1 FLOAT 10`}},
 		{`float3`, `10e-2`, res{`1:1 FLOAT 0.1`}},
 		{`float4`, `a.b`, res{`1:1 IDENT a`, `1:2 RAWCHAR '.'`, `1:3 IDENT b`}},
 		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 IDENT b`}},
