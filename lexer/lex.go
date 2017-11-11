@@ -105,6 +105,18 @@ type Lexer struct {
 //
 type StateFn func(l *Lexer) StateFn
 
+// If returns a StateFn that will execute f if cond returns true and execute
+// elseFn otherwise.
+//
+func (f StateFn) If(cond func(l *Lexer) bool, elseFn StateFn) StateFn {
+	return func(l *Lexer) StateFn {
+		if cond(l) {
+			return f(l)
+		}
+		return elseFn(l)
+	}
+}
+
 // New creates a new lexer associated with the given source file.
 //
 func New(f *token.File, l *Lang) *Lexer {
@@ -182,6 +194,28 @@ func (l *Lexer) Next() rune {
 	return r
 }
 
+// Peek returns the next rune in the input stream without consuming it.
+//
+func (l *Lexer) Peek() rune {
+	if sz := l.TokenLen(); sz < len(l.b) {
+		r := l.b[sz]
+		return r
+	}
+	r, s, err := l.f.ReadRune()
+	switch {
+	case s == 0:
+		r = EOF
+	case err != nil && err != io.EOF:
+		r = EOF
+		l.Errorf(err.Error())
+	}
+	if r == '\n' {
+		l.f.AddLine(l.n)
+	}
+	l.b = append(l.b, r)
+	return r
+}
+
 // Backup reverts the last call to next().
 //
 func (l *Lexer) Backup() {
@@ -233,14 +267,18 @@ func (l *Lexer) Last() rune {
 	return l.b[l.TokenLen()-1]
 }
 
-// AcceptWhile accepts input while the f function returns true.
+// AcceptWhile accepts input while the f function returns true. The return value
+// is the number of runes accepted.
 //
 // The first rune for which f will return false will not be included in the token.
 //
-func (l *Lexer) AcceptWhile(f func(r rune) bool) {
+func (l *Lexer) AcceptWhile(f func(r rune) bool) int {
+	i := 0
 	for r := l.Next(); f(r); r = l.Next() {
+		i++
 	}
 	l.Backup()
+	return i
 }
 
 // AcceptUpTo accepts input until it finds an occurence of s.
