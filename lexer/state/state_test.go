@@ -187,20 +187,18 @@ func initLang2() *lexer.Lang {
 	})
 
 	lang.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
-	lang.MatchAny(tokNumber, []rune(".0123456789"), state.Number(true, '.').If(
-		func(l *lexer.Lexer) bool {
-			if l.Last() == '.' {
-				r := l.Peek()
-				return r >= '0' && r <= '9'
+	lang.MatchAny(tokNumber, []rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
+		if l.Last() == '.' {
+			r := l.Peek()
+			if r < '0' || r > '9' {
+				// leading '.' not followed by a digit
+				l.Emit(token.RawChar, '.')
+				return nil
 			}
-			return true
-		},
-		func(l *lexer.Lexer) lexer.StateFn {
-			// character following leading decimal point is not a digit, emit '.'
-			l.Emit(token.RawChar, '.')
-			return nil
-		},
-	))
+		}
+		return state.Number(true, '.')
+	})
+	lang.Match(tokColon, ":", state.EmitNil)
 
 	return lang
 }
@@ -208,7 +206,7 @@ func initLang2() *lexer.Lang {
 func Test_floats(t *testing.T) {
 	var td = []testData{
 		{`float1`, `1.23`, res{`1:1 FLOAT 1.23`}},
-		{`float2`, `10e3`, res{`1:1 FLOAT 10000`}},
+		{`float2`, `10.e3`, res{`1:1 FLOAT 10000`}},
 		{`float3`, `10e-2`, res{`1:1 FLOAT 0.1`}},
 		{`float4`, `a.b`, res{`1:1 IDENT a`, `1:2 RAWCHAR '.'`, `1:3 IDENT b`}},
 		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 IDENT b`}},
@@ -216,6 +214,11 @@ func Test_floats(t *testing.T) {
 		{`float7`, `13.23e+2`, res{`1:1 FLOAT 1323`}},
 		{`float8`, `13.23e-2`, res{`1:1 FLOAT 0.1323`}},
 		{`float9`, `.23e3`, res{`1:1 FLOAT 230`}},
+		{`float10`, `0777:123`, res{`1:1 INT 511`, `1:5 COLON`, `1:6 INT 123`}},
+		{`float11`, `1eB:.e7:1e`, res{
+			`1:2 Error malformed malformed floating-point constant exponent`, `1:3 IDENT B`, `1:4 COLON`,
+			`1:5 RAWCHAR '.'`, `1:6 IDENT e7`, `1:8 COLON`,
+			`1:10 Error malformed malformed floating-point constant exponent`}},
 	}
 	runTests(t, initLang2(), td)
 }

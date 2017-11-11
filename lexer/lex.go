@@ -105,18 +105,6 @@ type Lexer struct {
 //
 type StateFn func(l *Lexer) StateFn
 
-// If returns a StateFn that will execute f if cond returns true and execute
-// elseFn otherwise.
-//
-func (f StateFn) If(cond func(l *Lexer) bool, elseFn StateFn) StateFn {
-	return func(l *Lexer) StateFn {
-		if cond(l) {
-			return f(l)
-		}
-		return elseFn(l)
-	}
-}
-
 // New creates a new lexer associated with the given source file.
 //
 func New(f *token.File, l *Lang) *Lexer {
