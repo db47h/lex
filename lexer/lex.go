@@ -1,24 +1,33 @@
-// Package lexer implements a configurable lexer.
-//
-// The lexer state is implemented with state functions and it supports
-// asynchronous token emission.
+// Package lexer provides boiler plate code to quickly build lexers using
+// state functions.
 //
 // The implementation is similar to https://golang.org/src/text/template/parse/lex.go.
 // Se also Rob Pike's talk about it: https://talks.golang.org/2011/lex.slide.
 //
-// The key difference with the lexer of the Go text template package is that the
-// asynchronous token emission is implemented with a FIFO queue instead of using
-// Go channels. Benchmarks with an earlier implementation that used a channel
-// showed that the using FIFO is about 5 times faster.
+// The package provides facilities to read input from a RuneReader (this will be
+// chaged in the future to a simple io.Reader) with unlimited look-ahead, as
+// well as utility functions commonly used in lexers.
+//
+// While the package could be used as-is with hand-crafted state functions,
+// the types and state functions provided in the subpackages lang and state make
+// building a new lexer even faster (and painless).
+//
+// Implementation details:
+//
+// Asynchronous token emission is implemented with a FIFO queue instead of using
+// Go channels (like in the Go text template package). Benchmarks with an
+// earlier implementation that used a channel showed that using a FIFO is about
+// 5 times faster.
 //
 // The drawback of using a FIFO is that once Emit() has been called from a state
 // function, the sent item will be received by the caller (parser) only when the
 // state function returns, so it must return as soon as possible.
 //
-// It performs at about a third of the speed of the Go lexer (for Go source
-// code) and it's on-par with the Go text template lexer where the performance
-// gain from using a FIFO is counter-balanced by the language configuration
-// overhead.
+// Combined with the lexer/lang package, it performs at about a third of the
+// speed of the Go lexer (for Go source code) and it's on-par with the Go text
+// template lexer where the performance gain from using a FIFO is
+// counter-balanced by overhead from the lang package as well as the undo buffer
+// not needed in this specific case.
 //
 package lexer
 
@@ -59,14 +68,20 @@ func (q *queue) pop() Item {
 }
 
 // EOF is the return value from Next() when EOF is reached.
+//
 const EOF = -1
 
 // Item represents a token returned from the lexer.
 //
 type Item struct {
+	// Token type. Can be any user-defined value, token.EOF or token.Error.
 	token.Type
-	token.Pos // Token start position within the file.
-	Value     interface{}
+	// Token start position within the file (in runes).
+	token.Pos
+	// The value type us user-defined for token types > 0.
+	// For built-in token types, this is nil except for errors where Value
+	// is a string describing the error.
+	Value interface{}
 }
 
 // String returns a string representation of the item. This should be used only
@@ -76,43 +91,49 @@ func (i *Item) String() string {
 	switch v := i.Value.(type) {
 	case string:
 		return fmt.Sprintf("%v %s", i.Type, v)
-	case interface {
-		String() string
-	}:
+	case fmt.Stringer:
 		return fmt.Sprintf("%v %s", i.Type, v.String())
 	default:
 		return fmt.Sprintf("%v", i.Type) // i.Token.String()
 	}
 }
 
-// A Lexer holds the internal state of the lexer while processing a given text.
+// A Lexer holds the internal state of the lexer while processing a given input.
 // Note that the public fields should only be accessed from custom StateFn
 // functions. Parsers should only call Lex().
 //
 type Lexer struct {
+	// Current initial-state function. This can be used by state functions to
+	// implement context switches (e.g. switch to a JS lexer while parsing HTML, etc.)
+	// See the lang subpackage for a more concrete example.
+	I StateFn
+	// Token type of the current token. This is purely informational and is
+	// used by the built-in state functions in the state package.
+	T token.Type
+
 	f     *token.File
-	L     *Lang      // current language
-	T     token.Type // current token type
-	b     []rune     // token string buffer
-	s     token.Pos  // token start position
-	n     token.Pos  // position of next rune read
-	q     *queue     // Item queue
+	b     []rune    // token string buffer
+	s     token.Pos // token start position
+	n     token.Pos // position of next rune read
+	q     *queue    // Item queue
 	state StateFn
 }
 
 // A StateFn is a state function. When a StateFn is called, the input that lead
 // to that state has already been scanned and can be retrieved with Lexer.Token().
+// If a StateFn returns nil the lexer transitions back to its initial state
+// function.
 //
 type StateFn func(l *Lexer) StateFn
 
 // New creates a new lexer associated with the given source file.
 //
-func New(f *token.File, l *Lang) *Lexer {
+func New(f *token.File, init StateFn) *Lexer {
 	return &Lexer{
 		f: f,
-		L: l,
+		I: init,
 		// initial q size must be an exponent of 2
-		q: &queue{items: make([]Item, 1)},
+		q: &queue{items: make([]Item, 2)},
 	}
 }
 
@@ -121,7 +142,7 @@ func New(f *token.File, l *Lang) *Lexer {
 func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
 		if l.state == nil {
-			l.state = l.L.doMatch(l)
+			l.state = l.I(l)
 		} else {
 			l.state = l.state(l)
 		}

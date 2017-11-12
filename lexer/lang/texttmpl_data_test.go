@@ -1,4 +1,4 @@
-package lexer_test
+package lang_test
 
 import "github.com/db47h/asm/token"
 

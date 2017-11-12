@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/db47h/asm/lexer"
+	"github.com/db47h/asm/lexer/lang"
 	"github.com/db47h/asm/lexer/state"
 	"github.com/db47h/asm/token"
 )
@@ -20,12 +21,13 @@ const (
 	tokString
 	tokChar
 	tokColon
+	tokRawChar
 )
 
 // define a simple language with Go-like identifiers, strings, chars, numbers,
 // ":" has its own token type, everything else is emitted as token.RawChar
-func initLang1() *lexer.Lang {
-	lang := lexer.NewLang(func(l *lexer.Lexer) lexer.StateFn {
+func initLang1() lexer.StateFn {
+	l := lang.New(func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
 
 		switch {
@@ -42,12 +44,12 @@ func initLang1() *lexer.Lang {
 			l.Discard()
 			return nil
 		default:
-			l.Emit(token.RawChar, r)
+			l.Emit(tokRawChar, r)
 			return nil
 		}
 	})
 
-	lang.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
 
 	// Consume first digit for state.Int() when lexing numbers in base 2 or 16
 	intBase2or16 := func(base int) lexer.StateFn {
@@ -58,18 +60,18 @@ func initLang1() *lexer.Lang {
 	}
 
 	// Numbers: integers only
-	lang.MatchAny(tokNumber, []rune("123456789"), state.Int(10))
-	lang.Match(tokNumber, "0", state.Int(8))
-	lang.Match(tokNumber, "0b", intBase2or16(2))
-	lang.Match(tokNumber, "0B", intBase2or16(2))
-	lang.Match(tokNumber, "0x", intBase2or16(16))
-	lang.Match(tokNumber, "0X", intBase2or16(16))
+	l.MatchAny(tokNumber, []rune("123456789"), state.Int(10))
+	l.Match(tokNumber, "0", state.Int(8))
+	l.Match(tokNumber, "0b", intBase2or16(2))
+	l.Match(tokNumber, "0B", intBase2or16(2))
+	l.Match(tokNumber, "0x", intBase2or16(16))
+	l.Match(tokNumber, "0X", intBase2or16(16))
 
-	lang.Match(tokString, "\"", state.QuotedString)
-	lang.Match(tokChar, "'", state.QuotedChar)
-	lang.Match(tokColon, ":", state.EmitNil)
+	l.Match(tokString, "\"", state.QuotedString)
+	l.Match(tokChar, "'", state.QuotedChar)
+	l.Match(tokColon, ":", state.EmitNil)
 
-	return lang
+	return l.Init()
 }
 
 type res []string
@@ -77,7 +79,7 @@ type res []string
 func itemString(l *lexer.Lexer, i *lexer.Item) string {
 	p := l.File().Position(i.Pos)
 	s := fmt.Sprintf("%d:%d ", p.Line, p.Column)
-	if i.Type < 0 && i.Type != token.RawChar {
+	if i.Type < 0 {
 		return s + i.String()
 	}
 	switch i.Type {
@@ -96,7 +98,7 @@ func itemString(l *lexer.Lexer, i *lexer.Item) string {
 		return s + "STRING " + strconv.Quote(i.Value.(string))
 	case tokChar:
 		return s + "CHAR " + strconv.QuoteRune(i.Value.(rune))
-	case token.RawChar:
+	case tokRawChar:
 		return s + "RAWCHAR " + strconv.QuoteRune(i.Value.(rune))
 	case tokColon:
 		return s + "COLON"
@@ -112,10 +114,10 @@ type testData struct {
 	res  res
 }
 
-func runTests(t *testing.T, lang *lexer.Lang, td []testData) {
+func runTests(t *testing.T, init lexer.StateFn, td []testData) {
 	for _, sample := range td {
 		t.Run(sample.name, func(t *testing.T) {
-			l := lexer.New(token.NewFile(sample.name, strings.NewReader(sample.in)), lang)
+			l := lexer.New(token.NewFile(sample.name, strings.NewReader(sample.in)), init)
 			var it lexer.Item
 			for i := range sample.res {
 				it = l.Lex()
@@ -163,8 +165,8 @@ func Test_all(t *testing.T) {
 	runTests(t, initLang1(), td)
 }
 
-func initLang2() *lexer.Lang {
-	lang := lexer.NewLang(func(l *lexer.Lexer) lexer.StateFn {
+func initLang2() lexer.StateFn {
+	l := lang.New(func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
 
 		switch {
@@ -181,26 +183,26 @@ func initLang2() *lexer.Lang {
 			l.Discard()
 			return nil
 		default:
-			l.Emit(token.RawChar, r)
+			l.Emit(tokRawChar, r)
 			return nil
 		}
 	})
 
-	lang.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
-	lang.MatchAny(tokNumber, []rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
+	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	l.MatchAny(tokNumber, []rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
 		if l.Last() == '.' {
 			r := l.Peek()
 			if r < '0' || r > '9' {
 				// leading '.' not followed by a digit
-				l.Emit(token.RawChar, '.')
+				l.Emit(tokRawChar, '.')
 				return nil
 			}
 		}
 		return state.Number(true, '.')
 	})
-	lang.Match(tokColon, ":", state.EmitNil)
+	l.Match(tokColon, ":", state.EmitNil)
 
-	return lang
+	return l.Init()
 }
 
 func Test_floats(t *testing.T) {

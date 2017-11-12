@@ -2,18 +2,19 @@ package lexer_test
 
 import (
 	"fmt"
-	gscanner "go/scanner"
-	gtoken "go/token"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode"
 
 	"github.com/db47h/asm/lexer"
+	"github.com/db47h/asm/lexer/lang"
 	"github.com/db47h/asm/lexer/state"
 	"github.com/db47h/asm/token"
 )
 
+// Sample input
+//
 var input = `// test data
 package main
 
@@ -23,48 +24,15 @@ import(
 
 // main function
 func main() {
-  b := make([]int, 10) // zero-filled
-  for i := 0; i < len(b); i++ {
+  b := make([]int, 10) /* trailing */
+  for i := 0; i < len(b /* inline */); i++ {
 	fmt.Println(b[i])
   }
 }
 `
 
-// goScan scans input with the Go scanner
+// Custom token types
 //
-func goScan() {
-	var gs gscanner.Scanner
-	gfs := gtoken.NewFileSet()
-	gf := gfs.AddFile("input", gfs.Base(), len(input))
-	gs.Init(gf, []byte(input), nil, gscanner.ScanComments)
-	for {
-		p, t, l := gs.Scan()
-		if t == gtoken.EOF {
-			return
-		}
-		fmt.Print(gfs.Position(p).String(), " ", t.String(), " ")
-		if l != "" {
-			fmt.Print(strconv.Quote(l))
-		}
-		fmt.Println()
-	}
-}
-
-// lexIdentifier scans identifiers then checks if the identifier is a keyword
-// and emits the appropriate token value.
-//
-func lexIdentifier(l *lexer.Lexer) lexer.StateFn {
-	l.AcceptWhile(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' })
-	// filter keywords
-	s := l.TokenString()
-	if t, ok := keywords[s]; ok {
-		l.Emit(t, s)
-	} else {
-		l.Emit(l.T, s)
-	}
-	return nil
-}
-
 const (
 	tokComment token.Type = iota
 	tokInt
@@ -80,6 +48,9 @@ const (
 	tokDot
 	tokEOL
 	tokIdent
+	tokLSS
+	tokGTR
+	tokInc
 	tokPackage
 	tokImport
 	tokFunc
@@ -101,6 +72,9 @@ var tokens = map[token.Type]string{
 	tokDot:          ".",
 	tokEOL:          ";",
 	tokIdent:        "IDENT",
+	tokLSS:          "<",
+	tokGTR:          ">",
+	tokInc:          "++",
 }
 var keywords = map[string]token.Type{
 	"package": tokPackage,
@@ -108,11 +82,8 @@ var keywords = map[string]token.Type{
 	"func":    tokFunc,
 	"for":     tokFor,
 }
-var lang *lexer.Lang
 
-// init() is a convenient place to define our language. In this case, we want to lex Go code.
-//
-func init() {
+func initFn() lexer.StateFn {
 	// map keyword names
 	for k, v := range keywords {
 		tokens[v] = k
@@ -120,7 +91,7 @@ func init() {
 
 	// Define language
 
-	lang = lexer.NewLang(func(l *lexer.Lexer) lexer.StateFn {
+	l := lang.New(func(l *lexer.Lexer) lexer.StateFn {
 		// exact prefix matches and EOF have already been checked for us
 		// we just need to skip spaces and lex identifiers.
 		r := l.Next()
@@ -138,15 +109,15 @@ func init() {
 		}
 
 		// fallback
-		l.Emit(token.RawChar, r)
+		l.Errorf("invalid character %#U", r)
 		return nil
 	})
 
 	// EOF
-	lang.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
 
 	// Line comment
-	lang.Match(tokComment, "//", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match(tokComment, "//", func(l *lexer.Lexer) lexer.StateFn {
 		l.AcceptUpTo([]rune{'\n'})
 		l.Backup() // don't put trailing \n in comment
 		l.Emit(l.T, l.TokenString())
@@ -154,7 +125,7 @@ func init() {
 	})
 
 	// C style comment
-	lang.Match(tokComment, "/*", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match(tokComment, "/*", func(l *lexer.Lexer) lexer.StateFn {
 		if ok := l.AcceptUpTo([]rune("*/")); !ok {
 			l.Errorf("unterminated block comment")
 			return nil
@@ -164,49 +135,70 @@ func init() {
 	})
 
 	// Integers
-	lang.MatchAny(tokInt, []rune("0123456789"), state.Int)
+	l.MatchAny(tokInt, []rune("0123456789"), state.Int(10))
 
 	// strings
-	lang.Match(tokString, "\"", state.QuotedString)
+	l.Match(tokString, "\"", state.QuotedString)
 
 	// parens
-	lang.Match(tokLeftParen, "(", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match(tokLeftParen, "(", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
 		l.Emit(l.T, nil)
 		return nil
 	})
-	lang.Match(tokRightParen, ")", state.EmitNil)
+	l.Match(tokRightParen, ")", state.EmitNil)
 
 	// brackets
-	lang.Match(tokLeftBracket, "[", state.EmitNil)
-	lang.Match(tokRightBracket, "]", state.EmitNil)
+	l.Match(tokLeftBracket, "[", state.EmitNil)
+	l.Match(tokRightBracket, "]", state.EmitNil)
 
 	// braces
-	lang.Match(tokLeftBrace, "{", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match(tokLeftBrace, "{", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
 		l.Emit(l.T, nil)
 		return nil
 	})
-	lang.Match(tokRightBrace, "}", state.EmitNil)
+	l.Match(tokRightBrace, "}", state.EmitNil)
 
 	// assignment
-	lang.Match(tokVar, ":=", state.EmitNil)
+	l.Match(tokVar, ":=", state.EmitNil)
 
 	// comma
-	lang.Match(tokComma, ",", state.EmitNil)
+	l.Match(tokComma, ",", state.EmitNil)
 
-	// dot
-	lang.Match(tokDot, ".", state.EmitNil)
+	// dot. TODO: "." needs special handling along with numbers.
+	l.Match(tokDot, ".", state.EmitNil)
+
+	// others
+	l.Match(tokLSS, "<", state.EmitNil)
+	l.Match(tokGTR, ">", state.EmitNil)
+	l.Match(tokInc, "++", state.EmitNil)
 
 	// convert EOLs to ;
-	lang.MatchAny(tokEOL, []rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
+	l.MatchAny(tokEOL, []rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
 		l.AcceptWhile(unicode.IsSpace)    // eat all space, including additional EOLs
 		l.Emit(l.T, string(l.Token()[0])) // use only the first rune as value
 		return nil
 	})
 
+	return l.Init()
+}
+
+// lexIdentifier scans identifiers then checks if the identifier is a keyword
+// and emits the appropriate token value.
+//
+func lexIdentifier(l *lexer.Lexer) lexer.StateFn {
+	l.AcceptWhile(func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' })
+	// filter keywords
+	s := l.TokenString()
+	if t, ok := keywords[s]; ok {
+		l.Emit(t, s)
+	} else {
+		l.Emit(l.T, s)
+	}
+	return nil
 }
 
 func goTokenString(i *lexer.Item) string {
@@ -229,43 +221,23 @@ func goTokenString(i *lexer.Item) string {
 }
 
 // Idiomatic usage
-func ExampleLexer() {
-	// goScan()
+func Example_go_lexer() {
 	fmt.Println()
 
 	f := token.NewFile("input", strings.NewReader(input))
-	l := lexer.New(f, lang)
+	l := lexer.New(f, initFn())
 
 	// t := time.Now()
 	for i := l.Lex(); i.Type != token.EOF; i = l.Lex() {
-		// fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
-	}
-	// i := l.Lex()
-	// fmt.Println(f.Position(i.Pos).String(), tokenString(&i))
-	// fmt.Printf("%v\n", time.Since(t))
-
-	// Output:
-}
-
-func BenchmarkGo(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		var gs gscanner.Scanner
-		gfs := gtoken.NewFileSet()
-		gf := gfs.AddFile("input", gfs.Base(), len(input))
-		gs.Init(gf, []byte(input), nil, gscanner.ScanComments)
-		for {
-			_, t, _ := gs.Scan()
-			if t == gtoken.EOF {
-				break
-			}
-		}
+		fmt.Println(f.Position(i.Pos).String(), goTokenString(&i))
 	}
 }
 
 func BenchmarkLEx(b *testing.B) {
+	init := initFn()
 	for n := 0; n < b.N; n++ {
 		f := token.NewFile("input", strings.NewReader(input))
-		l := lexer.New(f, lang)
+		l := lexer.New(f, init)
 		for i := l.Lex(); i.Type != token.EOF; i = l.Lex() {
 		}
 	}

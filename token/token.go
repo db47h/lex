@@ -10,16 +10,16 @@ package token
 //
 type Type int
 
-// Reserved token IDs.
+// Reserved token types.
 //
 const (
-	Invalid Type = -1 - iota
-	EOF          // end of file
-	Error        // error -- the associated value is a string
-	RawChar      // unknown raw character
+	Invalid Type = -1 - iota // invalid token. Emitting a token of this type is illegal.
+	EOF                      // end of file
+	Error                    // error -- the associated value is a string
 )
 
-// Pos represents a token's position within a File. This is a rune index rather than a byte index.
+// Pos represents a token's position within a File. This is a rune index rather
+// than a byte index.
 // For error reporting, this is not really an issue even for editors that do not
 // support rune-indexing since after conversion to the line:column based
 // Position, the line number is accurate and the column might be off by only a

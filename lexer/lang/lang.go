@@ -1,6 +1,7 @@
-package lexer
+package lang
 
 import (
+	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
 )
 
@@ -10,7 +11,7 @@ type nodeList map[rune]*node
 //
 type node struct {
 	c nodeList // child nodes
-	s StateFn
+	s lexer.StateFn
 	t token.Type
 }
 
@@ -23,32 +24,26 @@ func (n *node) match(r rune) *node {
 // A Lang represents the tokens (terminals) used in a language.
 //
 type Lang struct {
-	i StateFn
+	i lexer.StateFn
 	e *node // exact matches
 }
 
-// NewLang returns a new language with initFn as its initial state function.
+// New returns a new language with initFn as its initial state function.
 //
-func NewLang(initFn StateFn) *Lang {
+func New(initFn lexer.StateFn) *Lang {
 	if initFn == nil {
-		initFn = func(l *Lexer) StateFn {
-			r := l.Next()
-			if r == EOF {
-				return stateEOF
-			}
-			l.Emit(token.RawChar, r)
-			return nil
-		}
+		panic("no initial state function provided")
 	}
 	return &Lang{i: initFn, e: &node{c: make(nodeList)}}
 }
 
-func stateEOF(l *Lexer) StateFn {
-	l.Emit(token.EOF, nil)
-	return stateEOF
+// Init returns the language's initial state function.
+//
+func (lang *Lang) Init() lexer.StateFn {
+	return lang.doMatch
 }
 
-func (lang *Lang) doMatch(l *Lexer) StateFn {
+func (lang *Lang) doMatch(l *lexer.Lexer) lexer.StateFn {
 	var match *node
 	var i, mi int
 
@@ -59,7 +54,7 @@ func (lang *Lang) doMatch(l *Lexer) StateFn {
 			mi = i
 			match = n
 		}
-		if len(n.c) == 0 || r == EOF {
+		if len(n.c) == 0 || r == lexer.EOF {
 			// avoid unnecessary Next() / Backup() steps
 			break
 		}
@@ -80,7 +75,7 @@ func (lang *Lang) doMatch(l *Lexer) StateFn {
 // MatchRunes registers the state f for input starting with the runes in s.
 // When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (lang *Lang) MatchRunes(t token.Type, s []rune, f StateFn) {
+func (lang *Lang) MatchRunes(t token.Type, s []rune, f lexer.StateFn) {
 	n := lang.e
 	for _, r := range s {
 		i, ok := n.c[r]
@@ -100,13 +95,13 @@ func (lang *Lang) MatchRunes(t token.Type, s []rune, f StateFn) {
 // Match registers the state f for input starting with the string s.
 // When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (lang *Lang) Match(t token.Type, s string, f StateFn) {
+func (lang *Lang) Match(t token.Type, s string, f lexer.StateFn) {
 	lang.MatchRunes(t, []rune(s), f)
 }
 
 // MatchAny registers the state f for input starting with any of the runes in s.
 //
-func (lang *Lang) MatchAny(t token.Type, s []rune, f StateFn) {
+func (lang *Lang) MatchAny(t token.Type, s []rune, f lexer.StateFn) {
 	c := lang.e.c
 	for _, r := range s {
 		if n := c[r]; n != nil {

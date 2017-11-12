@@ -1,4 +1,4 @@
-package lexer_test
+package lang_test
 
 import (
 	"bufio"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/db47h/asm/lexer/lang"
 	"github.com/db47h/asm/lexer/state"
 
 	"github.com/db47h/asm/lexer"
@@ -82,8 +83,8 @@ func isAlphaNumeric(r rune) bool {
 //
 type tmplState struct {
 	parenDepth int
-	langAction *lexer.Lang
-	langText   *lexer.Lang
+	langAction lexer.StateFn
+	langText   lexer.StateFn
 }
 
 // initText returns the StateFn for the "text" initial state.
@@ -96,8 +97,9 @@ func (s *tmplState) initText() lexer.StateFn {
 			l.Emit(itemText, l.TokenString())
 			return nil
 		}
+		// all text preceeding "{{"
 		t := string(l.Token()[:l.TokenLen()-2])
-		// check trim
+		// trim white space if needed
 		if l.Accept([]rune("- ")) {
 			t = strings.TrimRight(t, " \t\r\n")
 		}
@@ -112,7 +114,7 @@ func (s *tmplState) initText() lexer.StateFn {
 		}
 		l.Emit(itemLeftDelim, "{{") // we could add the trim, but the Go version doesn't
 		// switch languages
-		l.L = s.langAction
+		l.I = s.langAction
 		s.parenDepth = 0
 		// this will switch the lexer's state to the langAction's initial state
 		return nil
@@ -155,7 +157,7 @@ func (s *tmplState) rightDelim(trim bool) lexer.StateFn {
 			}
 			l.Emit(itemRightDelim, "}}")
 		}
-		l.L = s.langText
+		l.I = s.langText
 		return nil
 	}
 }
@@ -181,16 +183,19 @@ func (s *tmplState) rightParen() lexer.StateFn {
 // initTmplLang creates a new tmplState, builds the language states
 // and returns a pointer to s.langText.
 //
-func initTmplLang() *lexer.Lang {
+func initTmplLang() lexer.StateFn {
 	s := tmplState{}
 
 	// "text" language: an initial state function that looks for '{{',
 	// optionally trims preceding space, then switches to the "action" language.
-	s.langText = lexer.NewLang(s.initText())
+	langText := lang.New(s.initText())
 	// check for EOF. This is the trivial case.
-	s.langText.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	langText.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
 
-	s.langAction = lexer.NewLang(func(l *lexer.Lexer) lexer.StateFn {
+	// all we need is a pointer to the language's init function
+	s.langText = langText.Init()
+
+	langAction := lang.New(func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
 
 		// This switch checks only the more complex cases not already handled
@@ -221,7 +226,7 @@ func initTmplLang() *lexer.Lang {
 	})
 
 	// check EOF/EOL
-	s.langAction.MatchAny(token.EOF, []rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
+	langAction.MatchAny(token.EOF, []rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Token()[0]
 		l.Errorf("unclosed action")
 		if r == '\n' {
@@ -232,11 +237,11 @@ func initTmplLang() *lexer.Lang {
 
 	// end of action  switch back to plain text lexing.
 	// register two versions: with and without trim marker.
-	s.langAction.Match(token.Invalid, " -}}", s.rightDelim(true))
-	s.langAction.Match(token.Invalid, "}}", s.rightDelim(false))
+	langAction.Match(token.Invalid, " -}}", s.rightDelim(true))
+	langAction.Match(token.Invalid, "}}", s.rightDelim(false))
 
 	// match field or variable
-	s.langAction.MatchAny(itemVariable, []rune("$."), func(l *lexer.Lexer) lexer.StateFn {
+	langAction.MatchAny(itemVariable, []rune("$."), func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
 		if unicode.IsLetter(r) || r == '_' {
 			if l.Token()[0] == '.' {
@@ -255,19 +260,21 @@ func initTmplLang() *lexer.Lang {
 	})
 
 	// strings
-	s.langAction.Match(itemString, "\"", state.QuotedString)
+	langAction.Match(itemString, "\"", state.QuotedString)
 
 	// left/right paren
-	s.langAction.Match(itemLeftParen, "(", s.leftParen())
-	s.langAction.Match(itemRightParen, ")", s.rightParen())
+	langAction.Match(itemLeftParen, "(", s.leftParen())
+	langAction.Match(itemRightParen, ")", s.rightParen())
 
-	s.langAction.Match(itemColonEquals, ":=", state.EmitString)
+	langAction.Match(itemColonEquals, ":=", state.EmitString)
 
 	// numbers
-	s.langAction.MatchAny(itemNumber, []rune("0123456789"), state.Int)
+	langAction.MatchAny(itemNumber, []rune("0123456789"), state.Int(10))
 
 	// pipe
-	s.langAction.Match(itemPipe, "|", state.EmitString)
+	langAction.Match(itemPipe, "|", state.EmitString)
+
+	s.langAction = langAction.Init()
 
 	return s.langText
 }
