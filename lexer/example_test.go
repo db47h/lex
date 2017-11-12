@@ -134,7 +134,7 @@ func initFn() lexer.StateFn {
 	})
 
 	// Integers
-	l.MatchAny([]rune("0123456789"), state.Int(tokInt, 10))
+	l.MatchAny("0123456789", state.Int(tokInt, 10))
 
 	// strings
 	l.Match("\"", state.QuotedString(tokString))
@@ -176,7 +176,7 @@ func initFn() lexer.StateFn {
 	l.Match("++", state.EmitNil(tokInc))
 
 	// convert EOLs to ;
-	l.MatchAny([]rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
+	l.MatchAny("\n;", func(l *lexer.Lexer) lexer.StateFn {
 		l.AcceptWhile(unicode.IsSpace)       // eat all space, including additional EOLs
 		l.Emit(tokEOL, string(l.Token()[0])) // use only the first rune as value
 		return nil

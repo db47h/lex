@@ -59,7 +59,7 @@ func initLang1() lexer.StateFn {
 	}
 
 	// Numbers: integers only
-	l.MatchAny([]rune("123456789"), state.Int(tokNumber, 10))
+	l.MatchAny("123456789", state.Int(tokNumber, 10))
 	l.Match("0", state.Int(tokNumber, 8))
 	l.Match("0b", intBase2or16(2))
 	l.Match("0B", intBase2or16(2))
@@ -185,7 +185,7 @@ func initLang2() lexer.StateFn {
 	})
 
 	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
-	l.MatchAny([]rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
+	l.MatchAny(".0123456789", func(l *lexer.Lexer) lexer.StateFn {
 		if l.Last() == '.' {
 			r := l.Peek()
 			if r < '0' || r > '9' {

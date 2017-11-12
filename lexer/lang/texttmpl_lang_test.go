@@ -226,7 +226,7 @@ func initTmplLang() lexer.StateFn {
 	})
 
 	// check EOF/EOL
-	langAction.MatchAny([]rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
+	langAction.MatchAnyRune([]rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Last()
 		l.Errorf("unclosed action")
 		if r == '\n' {
@@ -241,7 +241,7 @@ func initTmplLang() lexer.StateFn {
 	langAction.Match("}}", s.rightDelim(false))
 
 	// match field or variable
-	langAction.MatchAny([]rune("$."), func(l *lexer.Lexer) lexer.StateFn {
+	langAction.MatchAny("$.", func(l *lexer.Lexer) lexer.StateFn {
 		t := itemVariable
 		r := l.Next()
 		if unicode.IsLetter(r) || r == '_' {
@@ -270,7 +270,7 @@ func initTmplLang() lexer.StateFn {
 	langAction.Match(":=", state.EmitString(itemColonEquals))
 
 	// numbers
-	langAction.MatchAny([]rune("0123456789"), state.Int(itemNumber, 10))
+	langAction.MatchAny("0123456789", state.Int(itemNumber, 10))
 
 	// pipe
 	langAction.Match("|", state.EmitString(itemPipe))

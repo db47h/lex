@@ -95,9 +95,9 @@ func (lang *Lang) Match(s string, f lexer.StateFn) {
 	lang.MatchRunes([]rune(s), f)
 }
 
-// MatchAny registers the state f for input starting with any of the runes in s.
+// MatchAnyRune registers the state f for input starting with any of the runes in s.
 //
-func (lang *Lang) MatchAny(s []rune, f lexer.StateFn) {
+func (lang *Lang) MatchAnyRune(s []rune, f lexer.StateFn) {
 	c := lang.e.c
 	for _, r := range s {
 		if n := c[r]; n != nil {
@@ -108,4 +108,10 @@ func (lang *Lang) MatchAny(s []rune, f lexer.StateFn) {
 			c[r] = &node{c: make(nodeList), s: f}
 		}
 	}
+}
+
+// MatchAny registers the state f for input starting with any of the runes in s.
+//
+func (lang *Lang) MatchAny(s string, f lexer.StateFn) {
+	lang.MatchAnyRune([]rune(s), f)
 }

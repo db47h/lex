@@ -2,6 +2,7 @@ package state
 
 import (
 	"math/big"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -61,10 +62,7 @@ func Int(t token.Type, base int) lexer.StateFn {
 			}
 			if l.TokenLen() == start+1 {
 				// no digits!
-				// don't Backup if not EOF: this could cause and endless loop.
-				if r == lexer.EOF {
-					l.Backup()
-				}
+				l.Backup()
 				l.Errorf("malformed base %d immediate value", base)
 				return nil
 			}
@@ -87,9 +85,9 @@ func isDigit(r rune) bool {
 
 // Number returns a StateFn that lexes an integer or float literal then emits it
 // with the given type and either *big.Int or *big.Float value. This function
-// expects that the first digit or dot has already been read. The octal
-// parameter indicates if integer literals starting with a leading '0' should be
-// treated as octal numbers.
+// expects that the first digit or leading decimal separatro dot has already
+// been read. The octal parameter indicates if integer literals starting with a
+// leading '0' should be treated as octal numbers.
 //
 func Number(t token.Type, decimalSep rune, octal bool) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
@@ -154,6 +152,15 @@ func numFP(l *lexer.Lexer, t token.Type, start int) lexer.StateFn {
 func EOF(l *lexer.Lexer) lexer.StateFn {
 	l.Emit(token.EOF, nil)
 	return EOF
+}
+
+// Errorf returns a StateFn that will call Lexer.Errorf with the given arguments.
+//
+func Errorf(msg string, args ...interface{}) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		l.Errorf(msg, args...)
+		return nil
+	}
 }
 
 const (
@@ -364,4 +371,20 @@ func readDigits(l *lexer.Lexer, n, b int32) (v rune, err int) {
 		v = v*b + rl
 	}
 	return v, errNone
+}
+
+// IfMatchAny builds a conditional StateFn that will call thenFn if the
+// next rune matches any of the runes in the match string, otherwise it will
+// call elseFn.
+//
+func IfMatchAny(match string, thenFn, elseFn lexer.StateFn) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		// TODO: sort match, use a binary search.
+		r := l.Next()
+		if strings.ContainsRune(match, r) {
+			return thenFn(l)
+		}
+		l.Backup()
+		return elseFn(l)
+	}
 }
