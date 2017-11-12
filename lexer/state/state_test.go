@@ -33,11 +33,10 @@ func initLang1() lexer.StateFn {
 		switch {
 		// identifier
 		case unicode.IsLetter(r) || r == '_':
-			l.T = tokIdentifier
 			l.AcceptWhile(func(r rune) bool {
 				return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 			})
-			return state.EmitString
+			return state.EmitString(tokIdentifier)
 		case unicode.IsSpace(r):
 			// eat spaces
 			l.AcceptWhile(unicode.IsSpace)
@@ -49,27 +48,27 @@ func initLang1() lexer.StateFn {
 		}
 	})
 
-	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
 
 	// Consume first digit for state.Int() when lexing numbers in base 2 or 16
 	intBase2or16 := func(base int) lexer.StateFn {
 		return func(l *lexer.Lexer) lexer.StateFn {
 			l.Next()
-			return state.Int(base)(l)
+			return state.Int(tokNumber, base)(l)
 		}
 	}
 
 	// Numbers: integers only
-	l.MatchAny(tokNumber, []rune("123456789"), state.Int(10))
-	l.Match(tokNumber, "0", state.Int(8))
-	l.Match(tokNumber, "0b", intBase2or16(2))
-	l.Match(tokNumber, "0B", intBase2or16(2))
-	l.Match(tokNumber, "0x", intBase2or16(16))
-	l.Match(tokNumber, "0X", intBase2or16(16))
+	l.MatchAny([]rune("123456789"), state.Int(tokNumber, 10))
+	l.Match("0", state.Int(tokNumber, 8))
+	l.Match("0b", intBase2or16(2))
+	l.Match("0B", intBase2or16(2))
+	l.Match("0x", intBase2or16(16))
+	l.Match("0X", intBase2or16(16))
 
-	l.Match(tokString, "\"", state.QuotedString)
-	l.Match(tokChar, "'", state.QuotedChar)
-	l.Match(tokColon, ":", state.EmitNil)
+	l.Match("\"", state.QuotedString(tokString))
+	l.Match("'", state.QuotedChar(tokChar))
+	l.Match(":", state.EmitNil(tokColon))
 
 	return l.Init()
 }
@@ -105,8 +104,6 @@ func itemString(l *lexer.Lexer, i *lexer.Item) string {
 	}
 	panic("unknown type")
 }
-
-// var r = '�'
 
 type testData struct {
 	name string
@@ -172,11 +169,10 @@ func initLang2() lexer.StateFn {
 		switch {
 		// identifier
 		case unicode.IsLetter(r) || r == '_':
-			l.T = tokIdentifier
 			l.AcceptWhile(func(r rune) bool {
 				return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
 			})
-			return state.EmitString
+			return state.EmitString(tokIdentifier)
 		case unicode.IsSpace(r):
 			// eat spaces
 			l.AcceptWhile(unicode.IsSpace)
@@ -188,8 +184,8 @@ func initLang2() lexer.StateFn {
 		}
 	})
 
-	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
-	l.MatchAny(tokNumber, []rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
+	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
+	l.MatchAny([]rune(".0123456789"), func(l *lexer.Lexer) lexer.StateFn {
 		if l.Last() == '.' {
 			r := l.Peek()
 			if r < '0' || r > '9' {
@@ -198,9 +194,9 @@ func initLang2() lexer.StateFn {
 				return nil
 			}
 		}
-		return state.Number(true, '.')
+		return state.Number(tokNumber, '.', true)
 	})
-	l.Match(tokColon, ":", state.EmitNil)
+	l.Match(":", state.EmitNil(tokColon))
 
 	return l.Init()
 }

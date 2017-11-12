@@ -4,14 +4,14 @@ package token
 
 import "fmt"
 
-const _Type_name = "ErrorEOFInvalid"
+const _Type_name = "ErrorEOF"
 
-var _Type_index = [...]uint8{0, 5, 8, 15}
+var _Type_index = [...]uint8{0, 5, 8}
 
 func (i Type) String() string {
-	i -= -3
+	i -= -2
 	if i < 0 || i >= Type(len(_Type_index)-1) {
-		return fmt.Sprintf("Type(%d)", i+-3)
+		return fmt.Sprintf("Type(%d)", i+-2)
 	}
 	return _Type_name[_Type_index[i]:_Type_index[i+1]]
 }

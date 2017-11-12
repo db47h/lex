@@ -2,7 +2,6 @@ package lang
 
 import (
 	"github.com/db47h/asm/lexer"
-	"github.com/db47h/asm/token"
 )
 
 type nodeList map[rune]*node
@@ -12,7 +11,6 @@ type nodeList map[rune]*node
 type node struct {
 	c nodeList // child nodes
 	s lexer.StateFn
-	t token.Type
 }
 
 // match returns the first child node that matches the given rune.
@@ -64,7 +62,6 @@ func (lang *Lang) doMatch(l *lexer.Lexer) lexer.StateFn {
 
 	if match != nil {
 		l.BackupN(i - mi)
-		l.T = match.t
 		return match.s(l)
 	}
 
@@ -75,7 +72,7 @@ func (lang *Lang) doMatch(l *lexer.Lexer) lexer.StateFn {
 // MatchRunes registers the state f for input starting with the runes in s.
 // When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (lang *Lang) MatchRunes(t token.Type, s []rune, f lexer.StateFn) {
+func (lang *Lang) MatchRunes(s []rune, f lexer.StateFn) {
 	n := lang.e
 	for _, r := range s {
 		i, ok := n.c[r]
@@ -89,19 +86,18 @@ func (lang *Lang) MatchRunes(t token.Type, s []rune, f lexer.StateFn) {
 		panic("token registered twice")
 	}
 	n.s = f
-	n.t = t
 }
 
 // Match registers the state f for input starting with the string s.
 // When in its initial state, if the input matches s, it sets l.T = t and switches its state to f.
 //
-func (lang *Lang) Match(t token.Type, s string, f lexer.StateFn) {
-	lang.MatchRunes(t, []rune(s), f)
+func (lang *Lang) Match(s string, f lexer.StateFn) {
+	lang.MatchRunes([]rune(s), f)
 }
 
 // MatchAny registers the state f for input starting with any of the runes in s.
 //
-func (lang *Lang) MatchAny(t token.Type, s []rune, f lexer.StateFn) {
+func (lang *Lang) MatchAny(s []rune, f lexer.StateFn) {
 	c := lang.e.c
 	for _, r := range s {
 		if n := c[r]; n != nil {
@@ -109,7 +105,7 @@ func (lang *Lang) MatchAny(t token.Type, s []rune, f lexer.StateFn) {
 				panic("token registered twice")
 			}
 		} else {
-			c[r] = &node{c: make(nodeList), s: f, t: t}
+			c[r] = &node{c: make(nodeList), s: f}
 		}
 	}
 }

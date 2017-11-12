@@ -13,9 +13,8 @@ type Type int
 // Reserved token types.
 //
 const (
-	Invalid Type = -1 - iota // invalid token. Emitting a token of this type is illegal.
-	EOF                      // end of file
-	Error                    // error -- the associated value is a string
+	EOF   Type = -1 - iota // end of file
+	Error                  // error -- the associated value is a string
 )
 
 // Pos represents a token's position within a File. This is a rune index rather

@@ -167,7 +167,7 @@ func (s *tmplState) rightDelim(trim bool) lexer.StateFn {
 func (s *tmplState) leftParen() lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s.parenDepth++
-		return state.EmitString
+		return state.EmitString(itemLeftParen)
 	}
 }
 
@@ -176,7 +176,7 @@ func (s *tmplState) leftParen() lexer.StateFn {
 func (s *tmplState) rightParen() lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s.parenDepth--
-		return state.EmitString
+		return state.EmitString(itemRightParen)
 	}
 }
 
@@ -190,7 +190,7 @@ func initTmplLang() lexer.StateFn {
 	// optionally trims preceding space, then switches to the "action" language.
 	langText := lang.New(s.initText())
 	// check for EOF. This is the trivial case.
-	langText.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	langText.MatchRunes([]rune{lexer.EOF}, state.EOF)
 
 	// all we need is a pointer to the language's init function
 	s.langText = langText.Init()
@@ -226,8 +226,8 @@ func initTmplLang() lexer.StateFn {
 	})
 
 	// check EOF/EOL
-	langAction.MatchAny(token.EOF, []rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Token()[0]
+	langAction.MatchAny([]rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
+		r := l.Last()
 		l.Errorf("unclosed action")
 		if r == '\n' {
 			return nil // keep going
@@ -237,42 +237,43 @@ func initTmplLang() lexer.StateFn {
 
 	// end of action  switch back to plain text lexing.
 	// register two versions: with and without trim marker.
-	langAction.Match(token.Invalid, " -}}", s.rightDelim(true))
-	langAction.Match(token.Invalid, "}}", s.rightDelim(false))
+	langAction.Match(" -}}", s.rightDelim(true))
+	langAction.Match("}}", s.rightDelim(false))
 
 	// match field or variable
-	langAction.MatchAny(itemVariable, []rune("$."), func(l *lexer.Lexer) lexer.StateFn {
+	langAction.MatchAny([]rune("$."), func(l *lexer.Lexer) lexer.StateFn {
+		t := itemVariable
 		r := l.Next()
 		if unicode.IsLetter(r) || r == '_' {
 			if l.Token()[0] == '.' {
-				l.T = itemField
+				t = itemField
 			}
 			l.AcceptWhile(isAlphaNumeric)
-			l.Emit(l.T, l.TokenString())
+			l.Emit(t, l.TokenString())
 			return nil
 		}
 		if l.Token()[0] == '.' {
-			l.T = itemDot
+			t = itemDot
 		}
 		l.Backup()
-		l.Emit(l.T, l.TokenString())
+		l.Emit(t, l.TokenString())
 		return nil
 	})
 
 	// strings
-	langAction.Match(itemString, "\"", state.QuotedString)
+	langAction.Match("\"", state.QuotedString(itemString))
 
 	// left/right paren
-	langAction.Match(itemLeftParen, "(", s.leftParen())
-	langAction.Match(itemRightParen, ")", s.rightParen())
+	langAction.Match("(", s.leftParen())
+	langAction.Match(")", s.rightParen())
 
-	langAction.Match(itemColonEquals, ":=", state.EmitString)
+	langAction.Match(":=", state.EmitString(itemColonEquals))
 
 	// numbers
-	langAction.MatchAny(itemNumber, []rune("0123456789"), state.Int(10))
+	langAction.MatchAny([]rune("0123456789"), state.Int(itemNumber, 10))
 
 	// pipe
-	langAction.Match(itemPipe, "|", state.EmitString)
+	langAction.Match("|", state.EmitString(itemPipe))
 
 	s.langAction = langAction.Init()
 

@@ -104,7 +104,6 @@ func initFn() lexer.StateFn {
 
 		// identifiers start with a letter or underscore
 		if r == '_' || unicode.IsLetter(r) {
-			l.T = tokIdent
 			return lexIdentifier(l)
 		}
 
@@ -114,72 +113,72 @@ func initFn() lexer.StateFn {
 	})
 
 	// EOF
-	l.MatchRunes(token.EOF, []rune{lexer.EOF}, state.EOF)
+	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
 
 	// Line comment
-	l.Match(tokComment, "//", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match("//", func(l *lexer.Lexer) lexer.StateFn {
 		l.AcceptUpTo([]rune{'\n'})
 		l.Backup() // don't put trailing \n in comment
-		l.Emit(l.T, l.TokenString())
+		l.Emit(tokComment, l.TokenString())
 		return nil
 	})
 
 	// C style comment
-	l.Match(tokComment, "/*", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match("/*", func(l *lexer.Lexer) lexer.StateFn {
 		if ok := l.AcceptUpTo([]rune("*/")); !ok {
 			l.Errorf("unterminated block comment")
 			return nil
 		}
-		l.Emit(l.T, l.TokenString())
+		l.Emit(tokComment, l.TokenString())
 		return nil
 	})
 
 	// Integers
-	l.MatchAny(tokInt, []rune("0123456789"), state.Int(10))
+	l.MatchAny([]rune("0123456789"), state.Int(tokInt, 10))
 
 	// strings
-	l.Match(tokString, "\"", state.QuotedString)
+	l.Match("\"", state.QuotedString(tokString))
 
 	// parens
-	l.Match(tokLeftParen, "(", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match("(", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
-		l.Emit(l.T, nil)
+		l.Emit(tokLeftParen, nil)
 		return nil
 	})
-	l.Match(tokRightParen, ")", state.EmitNil)
+	l.Match(")", state.EmitNil(tokRightParen))
 
 	// brackets
-	l.Match(tokLeftBracket, "[", state.EmitNil)
-	l.Match(tokRightBracket, "]", state.EmitNil)
+	l.Match("[", state.EmitNil(tokLeftBracket))
+	l.Match("]", state.EmitNil(tokRightBracket))
 
 	// braces
-	l.Match(tokLeftBrace, "{", func(l *lexer.Lexer) lexer.StateFn {
+	l.Match("{", func(l *lexer.Lexer) lexer.StateFn {
 		// eat any space following '('
 		l.AcceptWhile(unicode.IsSpace)
-		l.Emit(l.T, nil)
+		l.Emit(tokLeftBrace, nil)
 		return nil
 	})
-	l.Match(tokRightBrace, "}", state.EmitNil)
+	l.Match("}", state.EmitNil(tokRightBrace))
 
 	// assignment
-	l.Match(tokVar, ":=", state.EmitNil)
+	l.Match(":=", state.EmitNil(tokVar))
 
 	// comma
-	l.Match(tokComma, ",", state.EmitNil)
+	l.Match(",", state.EmitNil(tokComma))
 
 	// dot. TODO: "." needs special handling along with numbers.
-	l.Match(tokDot, ".", state.EmitNil)
+	l.Match(".", state.EmitNil(tokDot))
 
 	// others
-	l.Match(tokLSS, "<", state.EmitNil)
-	l.Match(tokGTR, ">", state.EmitNil)
-	l.Match(tokInc, "++", state.EmitNil)
+	l.Match("<", state.EmitNil(tokLSS))
+	l.Match(">", state.EmitNil(tokGTR))
+	l.Match("++", state.EmitNil(tokInc))
 
 	// convert EOLs to ;
-	l.MatchAny(tokEOL, []rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
-		l.AcceptWhile(unicode.IsSpace)    // eat all space, including additional EOLs
-		l.Emit(l.T, string(l.Token()[0])) // use only the first rune as value
+	l.MatchAny([]rune{'\n', ';'}, func(l *lexer.Lexer) lexer.StateFn {
+		l.AcceptWhile(unicode.IsSpace)       // eat all space, including additional EOLs
+		l.Emit(tokEOL, string(l.Token()[0])) // use only the first rune as value
 		return nil
 	})
 
@@ -196,7 +195,7 @@ func lexIdentifier(l *lexer.Lexer) lexer.StateFn {
 	if t, ok := keywords[s]; ok {
 		l.Emit(t, s)
 	} else {
-		l.Emit(l.T, s)
+		l.Emit(tokIdent, s)
 	}
 	return nil
 }
@@ -233,7 +232,7 @@ func Example_go_lexer() {
 	}
 }
 
-func BenchmarkLEx(b *testing.B) {
+func BenchmarkLexGo(b *testing.B) {
 	init := initFn()
 	for n := 0; n < b.N; n++ {
 		f := token.NewFile("input", strings.NewReader(input))

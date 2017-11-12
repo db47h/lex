@@ -9,18 +9,23 @@ import (
 	"github.com/db47h/asm/token"
 )
 
-// EmitNil just emits the current token with a nil value.
+// EmitNil returns a state function that emits the given token type with a nil value.
 //
-func EmitNil(l *lexer.Lexer) lexer.StateFn {
-	l.Emit(l.T, nil)
-	return nil
+func EmitNil(t token.Type) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		l.Emit(t, nil)
+		return nil
+	}
 }
 
-// EmitString just emits the current token with a string value.
+// EmitString returns a state function that emits the current token with the
+// given token type and a string value.
 //
-func EmitString(l *lexer.Lexer) lexer.StateFn {
-	l.Emit(l.T, l.TokenString())
-	return nil
+func EmitString(t token.Type) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		l.Emit(t, l.TokenString())
+		return nil
+	}
 }
 
 // Int returns a state function that lexes the digits of an int in the given
@@ -31,7 +36,7 @@ func EmitString(l *lexer.Lexer) lexer.StateFn {
 //
 // Number lexing stops at the first non-digit character.
 //
-func Int(base int) lexer.StateFn {
+func Int(t token.Type, base int) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		start := l.TokenLen() - 1
 		r := l.Last()
@@ -70,7 +75,7 @@ func Int(base int) lexer.StateFn {
 			if z == nil {
 				panic("int conversion failed")
 			}
-			l.Emit(l.T, z)
+			l.Emit(t, z)
 			return nil
 		}
 	}
@@ -81,18 +86,19 @@ func isDigit(r rune) bool {
 }
 
 // Number returns a StateFn that lexes an integer or float literal then emits it
-//  as a *Num. This function expects that the first digit or dot has already
-// been read. The octal parameter indicates if integer literals starting with a
-// leading '0' should be treated as octal numbers.
+// with the given type and either *big.Int or *big.Float value. This function
+// expects that the first digit or dot has already been read. The octal
+// parameter indicates if integer literals starting with a leading '0' should be
+// treated as octal numbers.
 //
-func Number(octal bool, decimalSep rune) lexer.StateFn {
+func Number(t token.Type, decimalSep rune, octal bool) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s := l.TokenLen() - 1
 		r := l.Last()
 
 		switch r {
 		case decimalSep:
-			return numFP(l, s)
+			return numFP(l, t, s)
 		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			l.AcceptWhile(isDigit)
 			if r = l.Peek(); r != decimalSep && r != 'e' {
@@ -101,10 +107,10 @@ func Number(octal bool, decimalSep rune) lexer.StateFn {
 					b = 8
 				}
 				l.BackupN(l.TokenLen() - s - 1)
-				return Int(b)(l)
+				return Int(t, b)(l)
 			}
 			l.Next()
-			return numFP(l, s)
+			return numFP(l, t, s)
 		default:
 			panic("Not a number")
 		}
@@ -114,7 +120,7 @@ func Number(octal bool, decimalSep rune) lexer.StateFn {
 // numFP lexes the fractional part of a number. The decimal separator
 // or exponent 'e' rune has already been consumed (and no other rune than these).
 //
-func numFP(l *lexer.Lexer, start int) lexer.StateFn {
+func numFP(l *lexer.Lexer, t token.Type, start int) lexer.StateFn {
 	r := l.Last()
 	if r != 'e' {
 		l.Token()[l.TokenLen()-1] = '.'
@@ -138,7 +144,7 @@ func numFP(l *lexer.Lexer, start int) lexer.StateFn {
 	if err != nil {
 		panic(err)
 	}
-	l.Emit(l.T, z)
+	l.Emit(t, z)
 	return nil
 }
 
@@ -174,32 +180,70 @@ var msg = [...]string{
 	errEmpty:         "empty character literal or unescaped %c in character literal",
 }
 
-// QuotedString lexes a Go string literal.
+// QuotedString returns a StateFn that lexes a Go string literal.
 //
 // When entering the StateFn, the starting delimiter has already been read and
 // will be reused as end-delimiter.
 //
-func QuotedString(l *lexer.Lexer) lexer.StateFn {
-	s := make([]byte, 0, 64)
-	var rb [utf8.UTFMax]byte
-	quote := l.Last()
-	for {
+func QuotedString(t token.Type) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		s := make([]byte, 0, 64)
+		var rb [utf8.UTFMax]byte
+		quote := l.Last()
+		for {
+			r, err := readChar(l, quote)
+			switch err {
+			case errNone:
+				if r <= utf8.RuneSelf {
+					s = append(s, byte(r))
+				} else {
+					s = append(s, rb[:utf8.EncodeRune(rb[:], r)]...)
+				}
+			case errRawByte:
+				s = append(s, byte(r))
+			case errEnd:
+				l.Emit(t, string(s))
+				return nil
+			case errEOL:
+				l.Backup()
+				l.Errorf(msg[errEOL], "string")
+				return nil // keep going
+			case errInvalidEscape, errInvalidRune:
+				l.Errorf(msg[err])
+				return terminateString(l, quote)
+			case errInvalidHex, errInvalidOctal:
+				l.Errorf(msg[err], l.Last())
+				return terminateString(l, quote)
+			}
+		}
+	}
+}
+
+// QuotedChar returns a StateFn that lexes a Go character literal.
+//
+// When entering the StateFn, the starting delimiter has already been read and
+// will be reused as end-delimiter.
+//
+func QuotedChar(t token.Type) lexer.StateFn {
+	return func(l *lexer.Lexer) lexer.StateFn {
+		quote := l.Last()
 		r, err := readChar(l, quote)
 		switch err {
-		case errNone:
-			if r <= utf8.RuneSelf {
-				s = append(s, byte(r))
-			} else {
-				s = append(s, rb[:utf8.EncodeRune(rb[:], r)]...)
+		case errNone, errRawByte:
+			n := l.Next()
+			if n == quote {
+				l.Emit(t, r)
+				return nil
 			}
-		case errRawByte:
-			s = append(s, byte(r))
+			l.Backup() // undo a potential EOF/EOL
+			l.Errorf(msg[errSize])
+			return terminateString(l, quote)
 		case errEnd:
-			l.Emit(l.T, string(s))
+			l.Errorf(msg[errEmpty], quote)
 			return nil
 		case errEOL:
 			l.Backup()
-			l.Errorf(msg[errEOL], "string")
+			l.Errorf(msg[errEOL], "character literal")
 			return nil // keep going
 		case errInvalidEscape, errInvalidRune:
 			l.Errorf(msg[err])
@@ -207,43 +251,9 @@ func QuotedString(l *lexer.Lexer) lexer.StateFn {
 		case errInvalidHex, errInvalidOctal:
 			l.Errorf(msg[err], l.Last())
 			return terminateString(l, quote)
+		default:
+			panic("unexpected return value from readChar")
 		}
-	}
-}
-
-// QuotedChar lexes a Go character literal.
-//
-// When entering the StateFn, the starting delimiter has already been read and
-// will be reused as end-delimiter.
-//
-func QuotedChar(l *lexer.Lexer) lexer.StateFn {
-	quote := l.Last()
-	r, err := readChar(l, quote)
-	switch err {
-	case errNone, errRawByte:
-		n := l.Next()
-		if n == quote {
-			l.Emit(l.T, r)
-			return nil
-		}
-		l.Backup() // undo a potential EOF/EOL
-		l.Errorf(msg[errSize])
-		return terminateString(l, quote)
-	case errEnd:
-		l.Errorf(msg[errEmpty], quote)
-		return nil
-	case errEOL:
-		l.Backup()
-		l.Errorf(msg[errEOL], "character literal")
-		return nil // keep going
-	case errInvalidEscape, errInvalidRune:
-		l.Errorf(msg[err])
-		return terminateString(l, quote)
-	case errInvalidHex, errInvalidOctal:
-		l.Errorf(msg[err], l.Last())
-		return terminateString(l, quote)
-	default:
-		panic("unexpected return value from readChar")
 	}
 }
 

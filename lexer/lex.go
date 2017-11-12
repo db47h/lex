@@ -106,11 +106,7 @@ type Lexer struct {
 	// Current initial-state function. This can be used by state functions to
 	// implement context switches (e.g. switch to a JS lexer while parsing HTML, etc.)
 	// See the lang subpackage for a more concrete example.
-	I StateFn
-	// Token type of the current token. This is purely informational and is
-	// used by the built-in state functions in the state package.
-	T token.Type
-
+	I     StateFn
 	f     *token.File
 	b     []rune    // token string buffer
 	s     token.Pos // token start position
@@ -247,7 +243,6 @@ func (l *Lexer) BackupN(n int) {
 //
 func (l *Lexer) Discard() {
 	l.b = l.b[:copy(l.b, l.b[l.TokenLen():])]
-	l.T = token.Invalid
 	l.s = l.n
 }
 
