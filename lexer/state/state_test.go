@@ -6,93 +6,34 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode"
 	"unicode/utf8"
 
-	"github.com/db47h/asm/lexer"
-	"github.com/db47h/asm/lexer/lang"
 	"github.com/db47h/asm/lexer/state"
+
+	"github.com/db47h/asm/lexer"
 	"github.com/db47h/asm/token"
 )
 
 const (
-	tokNumber token.Type = iota
-	tokIdentifier
+	tokInt token.Type = iota
+	tokFloat
 	tokString
 	tokChar
 	tokColon
 	tokRawChar
 )
 
-// define a simple language with Go-like identifiers, strings, chars, numbers,
-// ":" has its own token type, everything else is emitted as token.RawChar
-func initLang1() lexer.StateFn {
-	l := lang.New(func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Next()
-
-		switch {
-		// identifier
-		case unicode.IsLetter(r) || r == '_':
-			l.AcceptWhile(func(r rune) bool {
-				return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-			})
-			return state.EmitString(tokIdentifier)
-		case unicode.IsSpace(r):
-			// eat spaces
-			l.AcceptWhile(unicode.IsSpace)
-			l.Discard()
-			return nil
-		default:
-			l.Emit(tokRawChar, r)
-			return nil
-		}
-	})
-
-	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
-
-	// Consume first digit for state.Int() when lexing numbers in base 2 or 16
-	intBase2or16 := func(base int) lexer.StateFn {
-		return func(l *lexer.Lexer) lexer.StateFn {
-			l.Next()
-			return state.Int(tokNumber, base)(l)
-		}
-	}
-
-	// Numbers: integers only
-	l.MatchAny("123456789", state.Int(tokNumber, 10))
-	l.Match("0", state.Int(tokNumber, 8))
-	l.Match("0b", intBase2or16(2))
-	l.Match("0B", intBase2or16(2))
-	l.Match("0x", intBase2or16(16))
-	l.Match("0X", intBase2or16(16))
-
-	l.Match("\"", state.QuotedString(tokString))
-	l.Match("'", state.QuotedChar(tokChar))
-	l.Match(":", state.EmitNil(tokColon))
-
-	return l.Init()
-}
-
-type res []string
-
-func itemString(l *lexer.Lexer, i *lexer.Item) string {
+func itemString(l lexer.Interface, i *lexer.Item) string {
 	p := l.File().Position(i.Pos)
 	s := fmt.Sprintf("%d:%d ", p.Line, p.Column)
 	if i.Type < 0 {
 		return s + i.String()
 	}
 	switch i.Type {
-	case tokNumber:
-		switch v := i.Value.(type) {
-		case *big.Int:
-			return s + "INT " + v.String()
-		case *big.Float:
-			return s + "FLOAT " + v.String()
-		default:
-			panic("illegal number type")
-		}
-	case tokIdentifier:
-		return s + "IDENT " + i.Value.(string)
+	case tokFloat:
+		return s + "FLOAT " + i.Value.(*big.Float).String()
+	case tokInt:
+		return s + "INT " + i.Value.(*big.Int).String()
 	case tokString:
 		return s + "STRING " + strconv.Quote(i.Value.(string))
 	case tokChar:
@@ -105,13 +46,15 @@ func itemString(l *lexer.Lexer, i *lexer.Item) string {
 	panic("unknown type")
 }
 
+type res []string
+
 type testData struct {
 	name string
 	in   string
 	res  res
 }
 
-func runTests(t *testing.T, init lexer.StateFn, td []testData) {
+func runTests(t *testing.T, td []testData, init lexer.StateFn) {
 	for _, sample := range td {
 		t.Run(sample.name, func(t *testing.T) {
 			l := lexer.New(token.NewFile(sample.name, strings.NewReader(sample.in)), init)
@@ -126,13 +69,13 @@ func runTests(t *testing.T, init lexer.StateFn, td []testData) {
 			it = l.Lex()
 			if it.Type != token.EOF || int(it.Pos) != utf8.RuneCountInString(sample.in) {
 				p := l.File().Position(token.Pos(utf8.RuneCountInString(sample.in)))
-				t.Errorf("Got: %s, Expected: %d:%d EOF", itemString(l, &it), p.Line, p.Column)
+				t.Errorf("Got: %s (Pos: %d), Expected: %d:%d EOF. ", itemString(l, &it), it.Pos, p.Line, p.Column)
 			}
 		})
 	}
 }
 
-func Test_all(t *testing.T) {
+func Test_QuotedString(t *testing.T) {
 	var td = []testData{
 		{"str1", `"abcd\"\\\a\b\f\n\r\v\t"`, res{`1:1 STRING "abcd\"\\\a\b\f\n\r\v\t"`}},
 		{"str2", `"\xcC"`, res{`1:1 STRING "\xcc"`}},
@@ -149,76 +92,127 @@ func Test_all(t *testing.T) {
 		{"str9", "\"a\n", res{`1:1 Error unterminated string`}},
 		{"str10", "\"a\\\n", res{`1:1 Error unterminated string`}},
 		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
+	}
+	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+		r := l.Next()
+		switch r {
+		case '"':
+			return state.QuotedString(tokString)
+		case lexer.EOF:
+			return state.EOF
+		case ' ', '\n', '\t':
+			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
+		default:
+			l.Emit(tokRawChar, r)
+		}
+		return nil
+	})
+}
+
+func Test_QuotedChar(t *testing.T) {
+	var td = []testData{
 		{"char1", `'a' ''`, res{`1:1 CHAR 'a'`, `1:6 Error empty character literal or unescaped ' in character literal`}},
 		{"char2", `'aa'`, res{`1:3 Error invalid character literal (more than 1 character)`}},
 		{"char4", `'\z' '
 			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
+	}
+	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+		r := l.Next()
+		switch r {
+		case '\'':
+			return state.QuotedChar(tokChar)
+		case lexer.EOF:
+			return state.EOF
+		case ' ', '\n', '\t':
+			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
+		default:
+			l.Emit(tokRawChar, r)
+		}
+		return nil
+	})
+}
+
+func Test_Int(t *testing.T) {
+	var td = []testData{
 		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
 		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:19 Error malformed base 2 immediate value"}},
 		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:19 Error malformed base 16 immediate value"}},
 		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 immediate value"}},
 	}
-	runTests(t, initLang1(), td)
-}
-
-func initLang2() lexer.StateFn {
-	l := lang.New(func(l *lexer.Lexer) lexer.StateFn {
+	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Next()
-
-		switch {
-		// identifier
-		case unicode.IsLetter(r) || r == '_':
-			l.AcceptWhile(func(r rune) bool {
-				return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
-			})
-			return state.EmitString(tokIdentifier)
-		case unicode.IsSpace(r):
-			// eat spaces
-			l.AcceptWhile(unicode.IsSpace)
-			l.Discard()
+		switch r {
+		case '0':
+			r = l.Next()
+			switch r {
+			case 'x', 'X':
+				l.Next()
+				return state.Int(tokInt, 16)
+			case 'b', 'B':
+				l.Next()
+				return state.Int(tokInt, 2)
+			default:
+				l.Backup() // backup leading 0 just in case it's a single 0.
+				return state.Int(tokInt, 8)
+			}
+		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			return state.Int(tokInt, 10)
+		case lexer.EOF:
+			return state.EOF
+		case ':':
+			l.Emit(tokColon, nil)
 			return nil
+		case ' ', '\n', '\t':
+			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
 		default:
 			l.Emit(tokRawChar, r)
-			return nil
 		}
+		return nil
 	})
-
-	l.MatchRunes([]rune{lexer.EOF}, state.EOF)
-	l.MatchAny(".0123456789", func(l *lexer.Lexer) lexer.StateFn {
-		if l.Last() == '.' {
-			r := l.Peek()
-			if r < '0' || r > '9' {
-				// leading '.' not followed by a digit
-				l.Emit(tokRawChar, '.')
-				return nil
-			}
-		}
-		return state.Number(tokNumber, tokNumber, '.', true)
-	})
-	l.Match(":", state.EmitNil(tokColon))
-
-	return l.Init()
 }
 
-func Test_floats(t *testing.T) {
+func Test_Number(t *testing.T) {
 	var td = []testData{
 		{`float1`, `1.23`, res{`1:1 FLOAT 1.23`}},
 		{`float2`, `10.e3`, res{`1:1 FLOAT 10000`}},
 		{`float2b`, `10.`, res{`1:1 FLOAT 10`}},
 		{`float3`, `10e-2`, res{`1:1 FLOAT 0.1`}},
-		{`float4`, `a.b`, res{`1:1 IDENT a`, `1:2 RAWCHAR '.'`, `1:3 IDENT b`}},
-		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 IDENT b`}},
+		{`float4`, `a.b`, res{`1:1 RAWCHAR 'a'`, `1:2 RAWCHAR '.'`, `1:3 RAWCHAR 'b'`}},
+		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 RAWCHAR 'b'`}},
 		{`float6`, `13.23e2`, res{`1:1 FLOAT 1323`}},
 		{`float7`, `13.23e+2`, res{`1:1 FLOAT 1323`}},
 		{`float8`, `13.23e-2`, res{`1:1 FLOAT 0.1323`}},
 		{`float9`, `.23e3`, res{`1:1 FLOAT 230`}},
 		{`float10`, `0777:123`, res{`1:1 INT 511`, `1:5 COLON`, `1:6 INT 123`}},
-		{`float11`, `1eB:.e7:1e`, res{
-			`1:3 Error malformed malformed floating-point constant exponent`, `1:3 IDENT B`, `1:4 COLON`,
-			`1:5 RAWCHAR '.'`, `1:6 IDENT e7`, `1:8 COLON`,
-			`1:11 Error malformed malformed floating-point constant exponent`}},
+		{`float11`, `1eB:.e7:1ee`, res{
+			`1:3 Error malformed floating-point constant exponent`, `1:3 RAWCHAR 'B'`, `1:4 COLON`,
+			`1:5 RAWCHAR '.'`, `1:6 RAWCHAR 'e'`, `1:7 INT 7`, `1:8 COLON`,
+			`1:11 Error malformed floating-point constant exponent`,
+			`1:11 RAWCHAR 'e'`}},
 		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 immediate value`, `1:6 COLON`}},
 	}
-	runTests(t, initLang2(), td)
+	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+		r := l.Next()
+		switch r {
+		case '.':
+			r = l.Peek()
+			if r < '0' || r > '9' {
+				l.Emit(tokRawChar, '.')
+				return nil
+			}
+			fallthrough
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			return state.Number(tokInt, tokFloat, '.', true)
+		case ':':
+			l.Emit(tokColon, nil)
+		case lexer.EOF:
+			return state.EOF
+		case ' ', '\n', '\t':
+			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
+		default:
+			l.Emit(tokRawChar, r)
+		}
+		return nil
+	})
 }

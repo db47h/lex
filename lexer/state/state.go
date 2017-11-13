@@ -2,7 +2,6 @@ package state
 
 import (
 	"math/big"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 
@@ -10,36 +9,137 @@ import (
 	"github.com/db47h/asm/token"
 )
 
-// EmitNil returns a state function that emits the given token type with a nil value.
+// Number returns a StateFn that lexes an integer or float literal then emits it
+// with the given type and either *big.Int or *big.Float value. This function
+// expects that the first digit or leading decimal separator has already been
+// read. The octal parameter indicates if integer literals starting with a
+// leading '0' should be treated as octal numbers.
 //
-func EmitNil(t token.Type) lexer.StateFn {
+// The StateFn returned by this function is not reentrant. This is because Number
+// pre-allocates a buffer for use by the StateFn (that will be reset on every
+// call to the StateFn). As a rule of thumb, do not reuse the return value from
+// Number.
+//
+func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.StateFn {
+	b := make([]byte, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
-		l.Emit(t, nil)
+		b = b[:0]
+		r := l.Last()
+		pos := l.Pos()
+		base := 10
+		switch r {
+		case decimalSep:
+			return numFP(l, tokFloat, b)
+		case '0':
+			if octal {
+				base = 8
+			}
+			fallthrough
+		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			b = append(b, byte(r))
+			for r = l.Next(); isDigit(r); r = l.Next() {
+				b = append(b, byte(r))
+			}
+			if r == decimalSep || r == 'e' {
+				return numFP(l, tokFloat, b)
+			}
+			l.Backup()
+		default:
+			panic("Not a number")
+		}
+
+		// integer
+		if octal && b[0] == '0' {
+			// check digits
+			for i, r := range b[1:] {
+				if r >= '0'+byte(base) {
+					l.Errorf(pos+token.Pos(i)+1, "invalid character %#U in base %d immediate value", r, base)
+					return nil
+				}
+			}
+		}
+		z, _ := new(big.Int).SetString(string(b), base)
+		if z == nil {
+			panic("int conversion failed")
+		}
+		l.Emit(tokInt, z)
 		return nil
 	}
 }
 
-// EmitString returns a state function that emits the current token with the
-// given token type and a string value.
+// numFP lexes the fractional part of a number. The decimal separator
+// or exponent 'e' rune has already been consumed (and no other rune than these).
 //
-func EmitString(t token.Type) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
-		l.Emit(t, l.TokenString())
-		return nil
+func numFP(l *lexer.Lexer, t token.Type, b []byte) lexer.StateFn {
+	r := l.Last()
+	if r != 'e' {
+		// decimal separator
+		b = append(b, '.')
+		for r = l.Next(); isDigit(r); r = l.Next() {
+			b = append(b, byte(r))
+		}
 	}
+	if r == 'e' {
+		b = append(b, byte(r))
+		r = l.Next()
+		switch r {
+		case '+', '-':
+			b = append(b, byte(r))
+			r = l.Next()
+		}
+		if !isDigit(r) {
+			// Implementations that wish to implement things like implicit
+			// multiplication, like 24epsilon, cannot use this function as-is.
+			l.Errorf(l.Pos(), "malformed floating-point constant exponent")
+			l.Backup()
+			return nil
+		}
+		for {
+			b = append(b, byte(r))
+			r = l.Next()
+			if !isDigit(r) {
+				break
+			}
+		}
+	}
+	l.Backup()
+
+	z, _, err := big.ParseFloat(string(b), 10, 512, big.ToNearestEven)
+	if err != nil {
+		panic(err)
+	}
+	l.Emit(t, z)
+	return nil
 }
 
 // Int returns a state function that lexes the digits of an int in the given
 // base amd emits it as a big.Float. This function expects that the first
 // digit has been read.
 //
-// Supported bases are 2, 8, 10 and 16.
+// Supported bases are 2 to 36.
 //
 // Number lexing stops at the first non-digit character.
 //
+// For bases < 10 any ASCII digit greater than base will cause an error. Lexing
+// will resume at the first non-digit character.
+//
+// The StateFn returned by this function is not reentrant. This is because Int
+// pre-allocates a buffer for use by the StateFn (that will be reset on every
+// call to the StateFn). As a rule of thumb, do not reuse the return value from
+// Int.
+//
+// When entering the StateFn, if the last character read by Lexer.Next() is
+// not a valid digit for the given base (i.e. empty number), this will cause an
+// error and lexing will resume at that character. This may cause an infinite
+//  loop if not used properly.
+//
 func Int(t token.Type, base int) lexer.StateFn {
+	if base < 2 || base > 36 {
+		panic("unsupported number base")
+	}
+	b := make([]byte, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
-		start := l.TokenLen() - 1
+		b = b[:0]
 		r := l.Last()
 		for {
 			rl := unicode.ToLower(r)
@@ -48,6 +148,7 @@ func Int(t token.Type, base int) lexer.StateFn {
 			}
 			rl -= '0'
 			if rl >= 0 && rl < int32(base) {
+				b = append(b, byte(r))
 				r = l.Next()
 				continue
 			}
@@ -55,22 +156,19 @@ func Int(t token.Type, base int) lexer.StateFn {
 			// of an end of token: error then skip remaining digits.
 			if rl >= int32(base) && rl <= 9 {
 				l.Errorf(l.Pos(), "invalid character %#U in base %d immediate value", r, base)
-				for r := l.Next(); r >= '0' && r <= '9'; r = l.Next() {
-				}
-				l.Backup()
+				l.AcceptWhile(isDigit) // eat remaining digits
 				return nil
 			}
-			if l.TokenLen() == start+1 {
+			if len(b) == 0 {
 				// no digits!
-				pos := l.Pos()
+				l.Errorf(l.Pos(), "malformed base %d immediate value", base)
 				l.Backup()
-				l.Errorf(pos, "malformed base %d immediate value", base)
 				return nil
 			}
 			l.Backup()
 
 			z := new(big.Int)
-			z, _ = z.SetString(string(l.Token()[start:]), base)
+			z, _ = z.SetString(string(b), base)
 			if z == nil {
 				panic("int conversion failed")
 			}
@@ -84,102 +182,12 @@ func isDigit(r rune) bool {
 	return r >= '0' && r <= '9'
 }
 
-// Number returns a StateFn that lexes an integer or float literal then emits it
-// with the given type and either *big.Int or *big.Float value. This function
-// expects that the first digit or leading decimal separator has already been
-// read. The octal parameter indicates if integer literals starting with a
-// leading '0' should be treated as octal numbers.
-//
-func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
-		s := l.TokenLen() - 1
-		r := l.Last()
-		pos := l.Pos()
-		base := 10
-		switch r {
-		case decimalSep:
-			return numFP(l, tokFloat, s)
-		case '0':
-			if octal {
-				base = 8
-			}
-			fallthrough
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			l.AcceptWhile(isDigit)
-			if r = l.Peek(); r == decimalSep || r == 'e' {
-				l.Next()
-				return numFP(l, tokFloat, s)
-			}
-		default:
-			panic("Not a number")
-		}
-
-		// integer
-		tok := l.Token()[s:]
-		if octal && tok[0] == '0' {
-			// check digits
-			for i, r := range tok[1:] {
-				if r >= '0'+rune(base) {
-					l.Errorf(pos+token.Pos(i)+1, "invalid character %#U in base %d immediate value", r, base)
-					return nil
-				}
-			}
-		}
-		z, _ := new(big.Int).SetString(string(tok), base)
-		if z == nil {
-			panic("int conversion failed")
-		}
-		l.Emit(tokInt, z)
-		return nil
-	}
-}
-
-// numFP lexes the fractional part of a number. The decimal separator
-// or exponent 'e' rune has already been consumed (and no other rune than these).
-//
-func numFP(l *lexer.Lexer, t token.Type, start int) lexer.StateFn {
-	r := l.Last()
-	if r != 'e' {
-		l.Token()[l.TokenLen()-1] = '.'
-		l.AcceptWhile(isDigit)
-		r = l.Next()
-	}
-	if r == 'e' {
-		r = l.Peek()
-		switch r {
-		case '+', '-':
-			l.Next()
-		}
-		if l.AcceptWhile(isDigit) == 0 {
-			l.Errorf(l.Pos()+1, "malformed malformed floating-point constant exponent")
-			return nil
-		}
-	} else {
-		l.Backup()
-	}
-	z, _, err := big.ParseFloat(string(l.Token()[start:]), 10, 1024, big.ToNearestEven)
-	if err != nil {
-		panic(err)
-	}
-	l.Emit(t, z)
-	return nil
-}
-
 // EOF places the lexer.Lexer in End-Of-File state.
 // Once in this state, the lexer.Lexer will only emit EOF.
 //
 func EOF(l *lexer.Lexer) lexer.StateFn {
 	l.Emit(token.EOF, nil)
 	return EOF
-}
-
-// Errorf returns a StateFn that will call Lexer.Errorf with the given arguments.
-//
-func Errorf(msg string, args ...interface{}) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
-		l.Errorf(l.Pos(), msg, args...)
-		return nil
-	}
 }
 
 const (
@@ -212,9 +220,10 @@ var msg = [...]string{
 // will be reused as end-delimiter.
 //
 func QuotedString(t token.Type) lexer.StateFn {
+	s := make([]byte, 0, 64)
+	var rb [utf8.UTFMax]byte
 	return func(l *lexer.Lexer) lexer.StateFn {
-		s := make([]byte, 0, 64)
-		var rb [utf8.UTFMax]byte
+		s = s[:0]
 		quote := l.Last()
 		pos := l.Pos()
 		for {
@@ -393,20 +402,4 @@ func readDigits(l *lexer.Lexer, n, b int32) (v rune, err int) {
 		v = v*b + rl
 	}
 	return v, errNone
-}
-
-// IfMatchAny builds a conditional StateFn that will call thenFn if the
-// next rune matches any of the runes in the match string, otherwise it will
-// call elseFn.
-//
-func IfMatchAny(match string, thenFn, elseFn lexer.StateFn) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
-		// TODO: sort match, use a binary search.
-		r := l.Next()
-		if strings.ContainsRune(match, r) {
-			return thenFn(l)
-		}
-		l.Backup()
-		return elseFn(l)
-	}
 }
