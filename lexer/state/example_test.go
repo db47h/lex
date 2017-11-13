@@ -45,9 +45,9 @@ func initState() lexer.StateFn {
 
 	// // Numbers
 	// // leading dot case
-	l.Match(".", state.IfMatchAny("0123456789", state.Number(tNumber, '.', true), state.EmitString(tDot)))
+	l.Match(".", state.IfMatchAny("0123456789", state.Number(tNumber, tNumber, '.', true), state.EmitString(tDot)))
 	// // numbers starting with a digit are more straightforward
-	l.MatchAny("0123456789", state.Number(tNumber, '.', true))
+	l.MatchAny("0123456789", state.Number(tNumber, tNumber, '.', true))
 	// // hex numbers
 	hexNum := state.IfMatchAny("0123456789abcdefABCDEF", state.Int(tNumber, 16), state.Errorf("malformed hex number"))
 	l.Match("0x", hexNum)

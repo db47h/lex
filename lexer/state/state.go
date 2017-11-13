@@ -86,33 +86,51 @@ func isDigit(r rune) bool {
 
 // Number returns a StateFn that lexes an integer or float literal then emits it
 // with the given type and either *big.Int or *big.Float value. This function
-// expects that the first digit or leading decimal separatro dot has already
-// been read. The octal parameter indicates if integer literals starting with a
+// expects that the first digit or leading decimal separator has already been
+// read. The octal parameter indicates if integer literals starting with a
 // leading '0' should be treated as octal numbers.
 //
-func Number(t token.Type, decimalSep rune, octal bool) lexer.StateFn {
+func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s := l.TokenLen() - 1
 		r := l.Last()
-
+		pos := l.Pos()
+		base := 10
 		switch r {
 		case decimalSep:
-			return numFP(l, t, s)
-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			l.AcceptWhile(isDigit)
-			if r = l.Peek(); r != decimalSep && r != 'e' {
-				b := 10
-				if octal && l.Token()[s] == '0' {
-					b = 8
-				}
-				l.BackupN(l.TokenLen() - s - 1)
-				return Int(t, b)(l)
+			return numFP(l, tokFloat, s)
+		case '0':
+			if octal {
+				base = 8
 			}
-			l.Next()
-			return numFP(l, t, s)
+			fallthrough
+		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			l.AcceptWhile(isDigit)
+			if r = l.Peek(); r == decimalSep || r == 'e' {
+				l.Next()
+				return numFP(l, tokFloat, s)
+			}
 		default:
 			panic("Not a number")
 		}
+
+		// integer
+		tok := l.Token()[s:]
+		if octal && tok[0] == '0' {
+			// check digits
+			for i, r := range tok[1:] {
+				if r >= '0'+rune(base) {
+					l.Errorf(pos+token.Pos(i)+1, "invalid character %#U in base %d immediate value", r, base)
+					return nil
+				}
+			}
+		}
+		z, _ := new(big.Int).SetString(string(tok), base)
+		if z == nil {
+			panic("int conversion failed")
+		}
+		l.Emit(tokInt, z)
+		return nil
 	}
 }
 

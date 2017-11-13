@@ -194,7 +194,7 @@ func initLang2() lexer.StateFn {
 				return nil
 			}
 		}
-		return state.Number(tokNumber, '.', true)
+		return state.Number(tokNumber, tokNumber, '.', true)
 	})
 	l.Match(":", state.EmitNil(tokColon))
 
@@ -218,6 +218,7 @@ func Test_floats(t *testing.T) {
 			`1:3 Error malformed malformed floating-point constant exponent`, `1:3 IDENT B`, `1:4 COLON`,
 			`1:5 RAWCHAR '.'`, `1:6 IDENT e7`, `1:8 COLON`,
 			`1:11 Error malformed malformed floating-point constant exponent`}},
+		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 immediate value`, `1:6 COLON`}},
 	}
 	runTests(t, initLang2(), td)
 }
