@@ -127,8 +127,9 @@ func (s *tmplState) comment() lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		// The '/*' has already been seen.
 		// Discard everything until */ and expect " -}}" or "}}" following it.
+		pos := l.Pos()
 		if !l.AcceptUpTo([]rune("*/")) {
-			l.Errorf("unclosed comment")
+			l.Errorf(pos, "unclosed comment")
 			return nil
 		}
 		l.Discard()
@@ -139,7 +140,7 @@ func (s *tmplState) comment() lexer.StateFn {
 		case l.Accept([]rune("}}")):
 			l.Discard()
 		default:
-			l.Errorf("comment ends before closing delimiter")
+			l.Errorf(l.Pos(), "comment ends before closing delimiter")
 		}
 		return nil
 	}
@@ -150,7 +151,7 @@ func (s *tmplState) comment() lexer.StateFn {
 func (s *tmplState) rightDelim(trim bool) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		if s.parenDepth != 0 {
-			l.Errorf("unclosed left paren")
+			l.Errorf(l.Pos(), "unclosed left paren")
 		} else {
 			if trim {
 				l.AcceptWhile(unicode.IsSpace)
@@ -228,7 +229,7 @@ func initTmplLang() lexer.StateFn {
 	// check EOF/EOL
 	langAction.MatchAnyRune([]rune{lexer.EOF, '\n'}, func(l *lexer.Lexer) lexer.StateFn {
 		r := l.Last()
-		l.Errorf("unclosed action")
+		l.Errorf(l.Pos(), "unclosed action")
 		if r == '\n' {
 			return nil // keep going
 		}

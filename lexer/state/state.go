@@ -54,7 +54,7 @@ func Int(t token.Type, base int) lexer.StateFn {
 			// for bases 2 and 8, consider that an invalid digit is an error instead
 			// of an end of token: error then skip remaining digits.
 			if rl >= int32(base) && rl <= 9 {
-				l.Errorf("invalid character %#U in base %d immediate value", r, base)
+				l.Errorf(l.Pos(), "invalid character %#U in base %d immediate value", r, base)
 				for r := l.Next(); r >= '0' && r <= '9'; r = l.Next() {
 				}
 				l.Backup()
@@ -62,8 +62,9 @@ func Int(t token.Type, base int) lexer.StateFn {
 			}
 			if l.TokenLen() == start+1 {
 				// no digits!
+				pos := l.Pos()
 				l.Backup()
-				l.Errorf("malformed base %d immediate value", base)
+				l.Errorf(pos, "malformed base %d immediate value", base)
 				return nil
 			}
 			l.Backup()
@@ -132,7 +133,7 @@ func numFP(l *lexer.Lexer, t token.Type, start int) lexer.StateFn {
 			l.Next()
 		}
 		if l.AcceptWhile(isDigit) == 0 {
-			l.Errorf("malformed malformed floating-point constant exponent")
+			l.Errorf(l.Pos()+1, "malformed malformed floating-point constant exponent")
 			return nil
 		}
 	} else {
@@ -158,7 +159,7 @@ func EOF(l *lexer.Lexer) lexer.StateFn {
 //
 func Errorf(msg string, args ...interface{}) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
-		l.Errorf(msg, args...)
+		l.Errorf(l.Pos(), msg, args...)
 		return nil
 	}
 }
@@ -197,6 +198,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 		s := make([]byte, 0, 64)
 		var rb [utf8.UTFMax]byte
 		quote := l.Last()
+		pos := l.Pos()
 		for {
 			r, err := readChar(l, quote)
 			switch err {
@@ -213,13 +215,13 @@ func QuotedString(t token.Type) lexer.StateFn {
 				return nil
 			case errEOL:
 				l.Backup()
-				l.Errorf(msg[errEOL], "string")
+				l.Errorf(pos, msg[errEOL], "string")
 				return nil // keep going
 			case errInvalidEscape, errInvalidRune:
-				l.Errorf(msg[err])
+				l.Errorf(l.Pos(), msg[err])
 				return terminateString(l, quote)
 			case errInvalidHex, errInvalidOctal:
-				l.Errorf(msg[err], l.Last())
+				l.Errorf(l.Pos(), msg[err], l.Last())
 				return terminateString(l, quote)
 			}
 		}
@@ -234,6 +236,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 func QuotedChar(t token.Type) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
 		quote := l.Last()
+		pos := l.Pos()
 		r, err := readChar(l, quote)
 		switch err {
 		case errNone, errRawByte:
@@ -242,21 +245,22 @@ func QuotedChar(t token.Type) lexer.StateFn {
 				l.Emit(t, r)
 				return nil
 			}
+			pos = l.Pos()
 			l.Backup() // undo a potential EOF/EOL
-			l.Errorf(msg[errSize])
+			l.Errorf(pos, msg[errSize])
 			return terminateString(l, quote)
 		case errEnd:
-			l.Errorf(msg[errEmpty], quote)
+			l.Errorf(l.Pos(), msg[errEmpty], quote)
 			return nil
 		case errEOL:
 			l.Backup()
-			l.Errorf(msg[errEOL], "character literal")
+			l.Errorf(pos, msg[errEOL], "character literal")
 			return nil // keep going
 		case errInvalidEscape, errInvalidRune:
-			l.Errorf(msg[err])
+			l.Errorf(l.Pos(), msg[err])
 			return terminateString(l, quote)
 		case errInvalidHex, errInvalidOctal:
-			l.Errorf(msg[err], l.Last())
+			l.Errorf(l.Pos(), msg[err], l.Last())
 			return terminateString(l, quote)
 		default:
 			panic("unexpected return value from readChar")

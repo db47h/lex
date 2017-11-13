@@ -164,12 +164,12 @@ func (l *Lexer) Emit(t token.Type, value interface{}) {
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
-// of the error and the position set to the position of the last rune read by Next().
+// of the error and the position set to pos.
 //
-func (l *Lexer) Errorf(format string, args ...interface{}) {
+func (l *Lexer) Errorf(pos token.Pos, format string, args ...interface{}) {
 	l.q.push(Item{
 		Type:  token.Error,
-		Pos:   l.n - 1, // that's where the error actually occurred
+		Pos:   pos, // that's where the error actually occurred
 		Value: fmt.Sprintf(format, args...),
 	})
 	l.Discard()
@@ -189,7 +189,7 @@ func (l *Lexer) Next() rune {
 		r = EOF
 	case err != nil && err != io.EOF:
 		r = EOF
-		l.Errorf(err.Error())
+		l.Errorf(l.n, err.Error())
 	}
 	l.n++
 	if r == '\n' {
@@ -212,7 +212,7 @@ func (l *Lexer) Peek() rune {
 		r = EOF
 	case err != nil && err != io.EOF:
 		r = EOF
-		l.Errorf(err.Error())
+		l.Errorf(l.n, err.Error())
 	}
 	if r == '\n' {
 		l.f.AddLine(l.n)
@@ -262,6 +262,12 @@ func (l *Lexer) TokenString() string {
 //
 func (l *Lexer) TokenLen() int {
 	return int(l.n - l.s)
+}
+
+// Pos returns the position (rune offset) of the last rune read.
+//
+func (l *Lexer) Pos() token.Pos {
+	return l.n - 1
 }
 
 // Last returns the last rune read. May panic if called without a previous call

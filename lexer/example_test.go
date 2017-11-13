@@ -108,7 +108,7 @@ func initFn() lexer.StateFn {
 		}
 
 		// fallback
-		l.Errorf("invalid character %#U", r)
+		l.Errorf(l.Pos(), "invalid character %#U", r)
 		return nil
 	})
 
@@ -125,8 +125,9 @@ func initFn() lexer.StateFn {
 
 	// C style comment
 	l.Match("/*", func(l *lexer.Lexer) lexer.StateFn {
+		pos := l.Pos()
 		if ok := l.AcceptUpTo([]rune("*/")); !ok {
-			l.Errorf("unterminated block comment")
+			l.Errorf(pos, "unterminated block comment")
 			return nil
 		}
 		l.Emit(tokComment, l.TokenString())

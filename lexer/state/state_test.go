@@ -142,21 +142,21 @@ func Test_all(t *testing.T) {
 			`1:21 Error escape sequence is invalid Unicode code point`,
 			`1:32 Error escape sequence is invalid Unicode code point`,
 		}},
-		{"str5", `"a`, res{`1:2 Error unterminated string`}},
+		{"str5", `"a`, res{`1:1 Error unterminated string`}},
 		{"str6", `"\x2X"`, res{`1:5 Error non-hex character in escape sequence: U+0058 'X'`}},
 		{"str7", `"\277" "\28"`, res{`1:1 STRING "\xbf"`, `1:11 Error non-octal character in escape sequence: U+0038 '8'`}},
 		{"str8", `"\w"`, res{`1:3 Error unknown escape sequence`}},
-		{"str9", "\"a\n", res{`1:2 Error unterminated string`}},
-		{"str10", "\"a\\\n", res{`1:3 Error unterminated string`}},
-		{"str11", "\"\\21\n", res{`1:4 Error unterminated string`}},
+		{"str9", "\"a\n", res{`1:1 Error unterminated string`}},
+		{"str10", "\"a\\\n", res{`1:1 Error unterminated string`}},
+		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
 		{"char1", `'a' ''`, res{`1:1 CHAR 'a'`, `1:6 Error empty character literal or unescaped ' in character literal`}},
-		{"char2", `'aa'`, res{`1:2 Error invalid character literal (more than 1 character)`}},
+		{"char2", `'aa'`, res{`1:3 Error invalid character literal (more than 1 character)`}},
 		{"char4", `'\z' '
 			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
-		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:18 Error malformed base 2 immediate value"}},
-		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:18 Error malformed base 16 immediate value"}},
+		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:19 Error malformed base 2 immediate value"}},
+		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:19 Error malformed base 16 immediate value"}},
 		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 immediate value"}},
 	}
 	runTests(t, initLang1(), td)
@@ -215,9 +215,9 @@ func Test_floats(t *testing.T) {
 		{`float9`, `.23e3`, res{`1:1 FLOAT 230`}},
 		{`float10`, `0777:123`, res{`1:1 INT 511`, `1:5 COLON`, `1:6 INT 123`}},
 		{`float11`, `1eB:.e7:1e`, res{
-			`1:2 Error malformed malformed floating-point constant exponent`, `1:3 IDENT B`, `1:4 COLON`,
+			`1:3 Error malformed malformed floating-point constant exponent`, `1:3 IDENT B`, `1:4 COLON`,
 			`1:5 RAWCHAR '.'`, `1:6 IDENT e7`, `1:8 COLON`,
-			`1:10 Error malformed malformed floating-point constant exponent`}},
+			`1:11 Error malformed malformed floating-point constant exponent`}},
 	}
 	runTests(t, initLang2(), td)
 }
