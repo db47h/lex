@@ -8,10 +8,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/db47h/asm/lexer/state"
+	"github.com/db47h/parsekit/lexer/state"
 
-	"github.com/db47h/asm/lexer"
-	"github.com/db47h/asm/token"
+	"github.com/db47h/parsekit/lexer"
+	"github.com/db47h/parsekit/token"
 )
 
 const (

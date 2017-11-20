@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/db47h/asm/lexer"
-	"github.com/db47h/asm/token"
+	"github.com/db47h/parsekit/lexer"
+	"github.com/db47h/parsekit/token"
 )
 
 type testData struct {

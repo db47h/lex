@@ -1,11 +1,14 @@
+// +build ignore
+
+//
 package parser
 
 import (
 	"errors"
 	"fmt"
 
-	"github.com/db47h/asm/lexer"
-	"github.com/db47h/asm/token"
+	"github.com/db47h/parsekit/lexer"
+	"github.com/db47h/parsekit/token"
 )
 
 const maxPrec int = int(^uint(0) >> 1)

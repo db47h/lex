@@ -35,7 +35,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/db47h/asm/token"
+	"github.com/db47h/parsekit/token"
 )
 
 type queue struct {
