@@ -120,6 +120,7 @@ type Lexer struct {
 
 	f     *token.File
 	n     token.Pos // position of next rune read
+	l     int       // line count
 	q     *queue    // Item queue
 	state StateFn
 	r     rune // last rune read
@@ -137,6 +138,8 @@ type StateFn func(l *Lexer) StateFn
 // New creates a new lexer associated with the given source file.
 //
 func New(f *token.File, init StateFn) Interface {
+	// add line 1 to file
+	f.AddLine(0, 1)
 	return &Lexer{
 		f: f,
 		I: init,
@@ -198,7 +201,8 @@ func (l *Lexer) next() rune {
 		l.Errorf(l.n, err.Error())
 	}
 	if r == '\n' {
-		l.f.AddLine(l.n)
+		l.l++
+		l.f.AddLine(l.n, l.l+1)
 	}
 	l.r, l.p = r, l.r
 	return r

@@ -36,9 +36,8 @@ type File struct {
 //
 func NewFile(name string, r io.RuneReader) *File {
 	return &File{
-		name:  name,
-		r:     r,
-		lines: []Pos{0}, // auto-add line 0 at pos 0
+		name: name,
+		r:    r,
 	}
 }
 
@@ -54,13 +53,22 @@ func (f *File) ReadRune() (r rune, sz int, err error) {
 	return f.r.ReadRune()
 }
 
-// AddLine adds the line offset for a new line. Note that the first line is
-// automatically added at offset 0 by NewFile().
+// AddLine adds a new line at the given offset.
 //
-func (f *File) AddLine(pos Pos) {
-	if l := len(f.lines); l == 0 || f.lines[l-1] < pos {
-		f.lines = append(f.lines, pos)
+// line is the 1-based line index.
+//
+// The current implementation will only accept a new line if line == last line + 1
+// and pos greater than the position of the previous line.
+//
+func (f *File) AddLine(pos Pos, line int) {
+	l := len(f.lines)
+	if l := len(f.lines); l > 0 && f.lines[l-1] >= pos {
+		panic("invalid position")
 	}
+	if l+1 != line {
+		panic("invalid line number")
+	}
+	f.lines = append(f.lines, pos)
 }
 
 // Position returns the 1-based line and column for a given pos.
