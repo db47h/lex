@@ -1,3 +1,14 @@
+// Package state provides state functions for lexing quoted strings,
+// quoted characters and numbers (integers in any base as well as floats) and
+// graceful handling of EOF.
+//
+// According to the convention on Lexer.StateFn, all state functions expect that
+// the first character that is part of the lexed entity has already been read by
+// Lexer.Next() and will be retrieved by the state function via Lexer.Last.
+//
+// All functions (with the exception of EOF) are in fact constructors that
+// take a at least a token type as argument and return closures.
+//
 package state
 
 import (
@@ -12,8 +23,12 @@ import (
 // Number returns a StateFn that lexes an integer or float literal then emits it
 // with the given type and either *big.Int or *big.Float value. This function
 // expects that the first digit or leading decimal separator has already been
-// read. The octal parameter indicates if integer literals starting with a
-// leading '0' should be treated as octal numbers.
+// read.
+//
+// The tokInt and tokFloat arguments specify the token type to emit for integer
+// and floating point literals respecively. decimalSep is the character used
+// as a decimal separator and the octal parameter indicates if integer literals
+// starting with a leading '0' should be treated as octal numbers.
 //
 // The StateFn returned by this function is not reentrant. This is because Number
 // pre-allocates a buffer for use by the StateFn (that will be reset on every
@@ -113,8 +128,8 @@ func numFP(l *lexer.Lexer, t token.Type, b []byte) lexer.StateFn {
 }
 
 // Int returns a state function that lexes the digits of an int in the given
-// base amd emits it as a big.Float. This function expects that the first
-// digit has been read.
+// base amd emits it as a big.Int. This function expects that the first digit
+// has been read.
 //
 // Supported bases are 2 to 36.
 //
@@ -131,7 +146,7 @@ func numFP(l *lexer.Lexer, t token.Type, b []byte) lexer.StateFn {
 // When entering the StateFn, if the last character read by Lexer.Next() is
 // not a valid digit for the given base (i.e. empty number), this will cause an
 // error and lexing will resume at that character. This may cause an infinite
-//  loop if not used properly.
+// loop if not used properly.
 //
 func Int(t token.Type, base int) lexer.StateFn {
 	if base < 2 || base > 36 {
@@ -182,8 +197,8 @@ func isDigit(r rune) bool {
 	return r >= '0' && r <= '9'
 }
 
-// EOF places the lexer.Lexer in End-Of-File state.
-// Once in this state, the lexer.Lexer will only emit EOF.
+// EOF places the lexer in End-Of-File state.
+// Once in this state, the lexer will only emit EOF.
 //
 func EOF(l *lexer.Lexer) lexer.StateFn {
 	l.Emit(token.EOF, nil)
@@ -214,7 +229,9 @@ var msg = [...]string{
 	errEmpty:         "empty character literal or unescaped %c in character literal",
 }
 
-// QuotedString returns a StateFn that lexes a Go string literal.
+// QuotedString returns a StateFn that lexes a Go string literal. It supports
+// the same escape sequences as double-quoted Go string literals. Go raw string
+// literals are not supported.
 //
 // When entering the StateFn, the starting delimiter has already been read and
 // will be reused as end-delimiter.

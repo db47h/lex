@@ -121,7 +121,7 @@ func identifier() lexer.StateFn {
 	}
 }
 
-// Demonstrate our simple go lexer.
+// A lexer for a minimal Go-like language.
 //
 func Example_go() {
 	// initialize lexer.

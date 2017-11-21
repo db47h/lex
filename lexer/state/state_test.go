@@ -216,3 +216,34 @@ func Test_Number(t *testing.T) {
 		return nil
 	})
 }
+
+// ExampleNumber shows the result type from Number depending on the input (which
+// should be identical to Go). To summarise, numbers containing a decimal digit,
+// ending with one or with an exponentiation are floats. Everything else is
+// returned as an int.
+//
+func ExampleNumber() {
+	stateNumber := state.Number(0, 1, '.', false)
+	input := "0 0. 1e10 1.2e1"
+	f := token.NewFile("", strings.NewReader(input))
+	l := lexer.New(f, func(l *lexer.Lexer) lexer.StateFn {
+		r := l.Next()
+		switch r {
+		case lexer.EOF:
+			return state.EOF
+		case '.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			return stateNumber
+		default:
+			return nil // ignore anything else
+		}
+	})
+	for item := l.Lex(); item.Type != token.EOF; item = l.Lex() {
+		fmt.Printf("%T %v\n", item.Value, item.Value)
+	}
+
+	// Output:
+	// *big.Int 0
+	// *big.Float 0
+	// *big.Float 1e+10
+	// *big.Float 12
+}
