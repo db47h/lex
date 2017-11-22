@@ -11,13 +11,8 @@ import (
 	"github.com/db47h/parsekit/token"
 )
 
-// TinyGo returns a lexer Interface for a simple go-like language.
+// Token types.
 //
-func TinyGo(file *token.File) lexer.Interface {
-	return lexer.New(file, tgInit())
-}
-
-// tokens
 const (
 	goSemiColon  token.Type = iota // 0 semi-colon, EOL
 	goInt                          // 1 integer literal
@@ -34,6 +29,11 @@ const (
 // the state package and take advantage of buffer pre-allocation.
 //
 func tgInit() lexer.StateFn {
+	// Note that because of the buffer pre-allocation mentioned above, reusing
+	// any of these variables in multiple goroutines is not safe. i.e. do not
+	// turn these into global variables.
+	// Instead, call tgInit() to get a new initial state function for each lexer
+	// running in a goroutine.
 	quotedString := state.QuotedString(tokString)
 	quotedChar := state.QuotedString(tokString)
 	bin := state.Int(goInt, 2)
@@ -42,37 +42,47 @@ func tgInit() lexer.StateFn {
 	ident := identifier()
 
 	return func(l *lexer.Lexer) lexer.StateFn {
+		// get next rune
 		r := l.Next()
+		// THE big switch
 		switch r {
 		case lexer.EOF:
-			// End of file. Must be handled manually.
+			// End of file. Must always be handled manually.
 			return state.EOF
 		case '\n', ';':
 			// transform EOLs to semi-colons
-			l.Emit(goSemiColon, nil)
+			l.Emit(goSemiColon, ';')
 			return nil
 		case '"':
 			return quotedString
 		case '\'':
 			return quotedChar
-		// numbers are trickier. We have the leading 0 case:
+		// numbers are trickier. We have the leading 0 case: what follows
+		// could be a simple 0, an octal int, a float with a leading 0,
+		// or a binary or hexadecimal int with a '0x' or '0b' prefix.
 		case '0':
+			// get the rune following the leading 0.
 			r = l.Next()
 			switch r {
 			case 'x', 'X':
-				l.Next() // read first digit for Int
+				// 0x: hexadecimal int.
+				// read the first digit following 'x' before switching to the next state.
+				l.Next()
 				return hex
 			case 'b', 'B':
-				l.Next() // read first digit for Int
+				// 0b: binary int.
+				// read the first digit following 'b' before switching to the next state.
+				l.Next()
 				return bin
 			default:
 				// At this point, the input could be an octal integer or a float with a leading 0.
 				// Also, l.Last() would return the character following the leading 0, so we un-read
-				// it to that state.Number() can see that leading 0 and emit an octal if this is an
-				// integer literal.
+				// it to that state.Number() can see that leading 0 and properly identify octal integer
+				// literals.
 				l.Backup()
 				return number
 			}
+		// other digits are more straightforward
 		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			// let state.Number decide
 			return number
@@ -104,8 +114,8 @@ func tgInit() lexer.StateFn {
 }
 
 func identifier() lexer.StateFn {
-	// preallocate a buffer. It will end-up being at least as large as the largest
-	// identifier scanned.
+	// preallocate a buffer to store the identifier. It will end-up being at
+	// least as large as the largest identifier scanned.
 	b := make([]rune, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
 		// reset buffer and add first char
@@ -121,17 +131,20 @@ func identifier() lexer.StateFn {
 	}
 }
 
-// A lexer for a minimal Go-like language.
+// TinyGo: a lexer for a minimal Go-like language.
 //
 func Example_go() {
+	input := `var str = "some\tstring"
+	var flt = 1.275`
+
 	// initialize lexer.
 	//
-	l := TinyGo(token.NewFile("example", strings.NewReader(
-		`var str = "some string"
-var flt = 1.275
-`)))
+	inputFile := token.NewFile("example", strings.NewReader(input))
+	l := lexer.New(inputFile, tgInit())
 
+	// loop over each token
 	for item := l.Lex(); item.Type != token.EOF; item = l.Lex() {
+		// print the token type and value.
 		switch v := item.Value.(type) {
 		case nil:
 			fmt.Println(item.Type)
@@ -148,11 +161,10 @@ var flt = 1.275
 	// Type(5) "var"
 	// Type(5) "str"
 	// Type(7) '='
-	// Type(2) "some string"
-	// Type(0)
+	// Type(2) "some\tstring"
+	// Type(0) ';'
 	// Type(5) "var"
 	// Type(5) "flt"
 	// Type(7) '='
 	// Type(2) 1.275
-	// Type(0)
 }

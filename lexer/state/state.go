@@ -7,7 +7,9 @@
 // Lexer.Next() and will be retrieved by the state function via Lexer.Last.
 //
 // All functions (with the exception of EOF) are in fact constructors that
-// take a at least a token type as argument and return closures.
+// take a at least a token type as argument and return closures. Note that
+// because some of these constructors pre-allocate buffers, using the returned
+// state functions concurently is not safe. See the examples for correct usage.
 //
 package state
 
