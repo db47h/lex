@@ -322,7 +322,6 @@ func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
 			r := l.Next()
 			switch r {
 			case quote:
-				l.Discard()
 				return nil
 			case '\\':
 				r = l.Next()
@@ -334,7 +333,6 @@ func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
 				// unterminated string. Just ignore the error since
 				// this function is already called on error.
 				l.Backup()
-				l.Discard()
 				return nil
 			}
 		}
