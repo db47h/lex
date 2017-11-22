@@ -242,7 +242,7 @@ func (l *Lexer) next() rune {
 }
 
 // Next returns the next rune in the input stream. IF the end of the stream
-// has ben reached or an IO error occured, it will return EOF.
+// has ben reached or an IO error occurred, it will return EOF.
 //
 func (l *Lexer) Next() rune {
 	if l.b {
