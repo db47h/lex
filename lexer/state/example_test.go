@@ -34,8 +34,8 @@ func tgInit() lexer.StateFn {
 	// turn these into global variables.
 	// Instead, call tgInit() to get a new initial state function for each lexer
 	// running in a goroutine.
-	quotedString := state.QuotedString(tokString)
-	quotedChar := state.QuotedString(tokString)
+	quotedString := state.QuotedString(goString)
+	quotedChar := state.QuotedChar(goChar)
 	bin := state.Int(goInt, 2)
 	hex := state.Int(goInt, 2)
 	number := state.Number(goInt, goFloat, '.', true)

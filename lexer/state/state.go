@@ -49,7 +49,7 @@ import (
 // read.
 //
 // The tokInt and tokFloat arguments specify the token type to emit for integer
-// and floating point literals respecively. decimalSep is the character used
+// and floating point literals respectively. decimalSep is the character used
 // as a decimal separator and the octal parameter indicates if integer literals
 // starting with a leading '0' should be treated as octal numbers.
 //
