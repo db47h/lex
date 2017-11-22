@@ -2,9 +2,11 @@ package lexer_test
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/db47h/parsekit/lexer"
 	"github.com/db47h/parsekit/token"
@@ -37,10 +39,6 @@ func tString(i *lexer.Item) string {
 	default:
 		panic(fmt.Sprintf("unknown token type %d", i.Type))
 	}
-}
-
-func initState(l *lexer.Lexer) {
-	//	r :=
 }
 
 // Test proper behavior of Next/Peek/Backup
@@ -113,6 +111,88 @@ func TestLexer_Next(t *testing.T) {
 		p := l.File().Position(token.Pos(i))
 		if p.Line != i+1 {
 			t.Errorf("expected line %d, got %d", i+1, p.Line)
+		}
+	}
+}
+
+func TestLexer_Lex(t *testing.T) {
+	var stateEOF lexer.StateFn
+	stateEOF = func(l *lexer.Lexer) lexer.StateFn {
+		l.Emit(token.EOF, nil)
+		return stateEOF
+	}
+
+	var num int64
+	var base int64
+
+	scanDigit := func(r rune) bool {
+		r = unicode.ToLower(r)
+		if r >= 'a' {
+			r -= 'a' - '0' - 10
+		}
+		r -= '0'
+		if r >= 0 && r < rune(base) {
+			num = num*base + int64(r)
+			return true
+		}
+		return false
+	}
+
+	stateNum := func(l *lexer.Lexer) lexer.StateFn {
+		num = 0
+		base = 10
+		r := l.Last()
+		if r == '0' {
+			if l.Accept('x') || l.Accept('X') {
+				base = 16
+			} else {
+				base = 8
+			}
+			r = l.Next()
+		}
+		if scanDigit(r) {
+			l.AcceptWhile(scanDigit)
+		}
+		l.Emit(0, big.NewInt(num))
+		if base == 8 {
+			l.Errorf(l.Pos(), "piling up")
+			l.Errorf(l.Pos(), "things")
+		}
+		return nil
+	}
+
+	f := token.NewFile("test", strings.NewReader("0x24 12 0666 |"))
+	r := []string{
+		"Type(0) 36",
+		"Type(0) 12",
+		"Type(0) 438",
+		"Error piling up",
+		"Error things",
+		"EOF",
+	}
+	l := lexer.New(f,
+		func(l *lexer.Lexer) lexer.StateFn {
+			r := l.Next()
+			switch r {
+			case lexer.EOF:
+				return stateEOF
+			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				return stateNum
+			case '|':
+				// end marker
+				if !l.Expect(lexer.EOF) {
+					panic("| not @EOF")
+				}
+			}
+			return nil
+		})
+	for i := 0; ; i++ {
+		it := l.Lex()
+		if it.String() != r[i] {
+			t.Errorf("Got: %v, expected: %v", it.String(), r[i])
+		}
+		if it.Type == token.EOF {
+			break
 		}
 	}
 }
