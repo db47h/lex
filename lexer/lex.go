@@ -1,33 +1,29 @@
-// Package lexer provides boiler plate code to quickly build lexers using
-// state functions.
+// Package lexer provides the core of a lexer built as a DFA whose states are
+// implemented as functions.
 //
-// The implementation is similar to https://golang.org/src/text/template/parse/lex.go.
-// Se also Rob Pike's talk about it: https://talks.golang.org/2011/lex.slide.
-//
-// The package provides facilities to read input from a RuneReader (this will be
-// chaged in the future to a simple io.Reader) with unlimited look-ahead, as
-// well as utility functions commonly used in lexers.
-//
-// While the package could be used as-is with hand-crafted state functions,
-// the types and state functions provided in the subpackages lang and state make
-// building a new lexer even faster (and painless).
+// Clients of the package only need to provide state functions specialized in
+// lexing the target language. The package provides facilities to stream input
+// from a RuneReader (this will be changed in the future to a simple io.Reader)
+// with one char look-ahead, as well as utility functions commonly used in lexers.
 //
 // Implementation details:
 //
-// Asynchronous token emission is implemented with a FIFO queue instead of using
-// Go channels (like in the Go text template package). Benchmarks with an
-// earlier implementation that used a channel showed that using a FIFO is about
-// 5 times faster.
+// The implementation is similar to https://golang.org/src/text/template/parse/lex.go.
+// Se also Rob Pike's talk about using state functions for lexing: https://talks.golang.org/2011/lex.slide.
 //
-// The drawback of using a FIFO is that once Emit() has been called from a state
-// function, the sent item will be received by the caller (parser) only when the
-// state function returns, so it must return as soon as possible.
+// Unlike the Go text template package which uses Go channels as a mean of
+// asynchronous token emission, this package uses a FIFO queue instead.
+// Benchmarks with an earlier implementation that used a channel showed that
+// using a FIFO is about 5 times faster. There is also no need for the parser
+// to take care of cancellation or draining the input in case of error.
 //
-// Combined with the lexer/lang package, it performs at about a third of the
-// speed of the Go lexer (for Go source code) and it's on-par with the Go text
-// template lexer where the performance gain from using a FIFO is
-// counter-balanced by overhead from the lang package as well as the undo buffer
-// not needed in this specific case.
+// The drawback of using a FIFO is that once a state function has called Emit,
+// it must return as soon as possible so that the caller of Lex (usually a
+// parser) can receive the lexed item.
+//
+// The state sub-package provides state functions for lexing quoted strings,
+// quoted characters and numbers (integers in any base as well as floats) and
+// graceful handling of EOF.
 //
 package lexer
 
@@ -38,6 +34,8 @@ import (
 	"github.com/db47h/parsekit/token"
 )
 
+// queue is a FIFO queue.
+//
 type queue struct {
 	items []Item
 	head  int
@@ -59,7 +57,8 @@ func (q *queue) push(i Item) {
 	q.count++
 }
 
-// check that q.count > 0 before calling pop
+// pop pops the first item from the queue. Callers must check that q.count > 0 beforehand.
+//
 func (q *queue) pop() Item {
 	i := q.head
 	q.head = (q.head + 1) % len(q.items)
@@ -78,7 +77,7 @@ type Item struct {
 	token.Type
 	// Token start position within the file (in runes).
 	token.Pos
-	// The value type us user-defined for token types > 0.
+	// The value type is user-defined for token types > 0.
 	// For built-in token types, this is nil except for errors where Value
 	// is a string describing the error.
 	Value interface{}
@@ -98,7 +97,8 @@ func (i *Item) String() string {
 	}
 }
 
-// Interface wraps the public methods of a lexer.
+// Interface wraps the public methods of a lexer. This interface is intended for
+// parsers that call New(), then Lex() until EOF.
 //
 type Interface interface {
 	Lex() Item         // Lex reads source text and returns the next item until EOF.
@@ -107,15 +107,16 @@ type Interface interface {
 
 // A Lexer holds the internal state of the lexer while processing a given input.
 // Note that the public fields should only be accessed from custom StateFn
-// functions. Parsers should only call Lex().
+// functions.
 //
 type Lexer struct {
-	// Current initial-state function. This can be used by state functions to
+	// Current initial-state function. It can be used by state functions to
 	// implement context switches (e.g. switch to a JS lexer while parsing HTML, etc.)
+	// by setting this value to another init function then return nil.
 	I StateFn
 	// Start position of current token. Used as token position by Emit.
-	// Emit, Discard or returning nil from a StateFn resets its value to Pos() + 1.
-	// State functions should normally not need to adjust this value.
+	// calling Emit or returning nil from a StateFn resets its value to Pos() + 1.
+	// State functions should normally not need to read or change this value.
 	S token.Pos
 
 	f     *token.File
@@ -128,14 +129,20 @@ type Lexer struct {
 	b     bool // true if backed-up
 }
 
-// A StateFn is a state function. When a StateFn is called, the input that lead
-// to that state has already been scanned and can be retrieved with Lexer.Token().
-// If a StateFn returns nil the lexer transitions back to its initial state
-// function.
+// A StateFn is a state function.
+//
+// As a convention, when a StateFn is called, the input that lead to that state
+// has already been scanned and can be retrieved with Lexer.Last(). For example,
+// a state function that lexes numbers will have to call Last() to get the first
+// digit.
+//
+// If a StateFn returns nil, the lexer resets the current token start position
+// then transitions back to its initial state function.
 //
 type StateFn func(l *Lexer) StateFn
 
-// New creates a new lexer associated with the given source file.
+// New creates a new lexer associated with the given source file. A new lexer
+// must be created for every source file to be lexed.
 //
 func New(f *token.File, init StateFn) Interface {
 	// add line 1 to file
@@ -150,10 +157,14 @@ func New(f *token.File, init StateFn) Interface {
 
 // Lex reads source text and returns the next item until EOF.
 //
+// As a convention, once the end of file has been reached (or some
+// non-recoverable error condition), Lex() must return an item of type
+// token.EOF. Implementors of custom lexers must take care of this.
+//
 func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
 		if l.state == nil {
-			l.Discard()
+			l.updateStart()
 			l.state = l.I(l)
 		} else {
 			l.state = l.state(l)
@@ -168,7 +179,8 @@ func (l *Lexer) File() *token.File {
 	return l.f
 }
 
-// Emit emits a single token.
+// Emit emits a single token of the given type and value positioned at l.S.
+// Emit sets l.S to the start of the next token (i.e. l.Pos() + 1).
 //
 func (l *Lexer) Emit(t token.Type, value interface{}) {
 	l.q.push(Item{
@@ -176,7 +188,7 @@ func (l *Lexer) Emit(t token.Type, value interface{}) {
 		Pos:   l.S,
 		Value: value,
 	})
-	l.Discard()
+	l.updateStart()
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
@@ -208,7 +220,8 @@ func (l *Lexer) next() rune {
 	return r
 }
 
-// Next returns the next rune in the input stream.
+// Next returns the next rune in the input stream. IF the end of the stream
+// has ben reached or an IO error occured, it will return EOF.
 //
 func (l *Lexer) Next() rune {
 	if l.b {
@@ -234,7 +247,7 @@ func (l *Lexer) Peek() rune {
 	return l.next()
 }
 
-// Backup reverts the last call to next().
+// Backup reverts the last call to Next.
 //
 func (l *Lexer) Backup() {
 	if l.b || l.n == 0 {
@@ -243,9 +256,9 @@ func (l *Lexer) Backup() {
 	l.b = true
 }
 
-// Discard discards the current token.
+// updateStart sets l.S to l.Pos() + 1.
 //
-func (l *Lexer) Discard() {
+func (l *Lexer) updateStart() {
 	if l.b {
 		l.S = l.n - 1
 	} else {
@@ -253,7 +266,8 @@ func (l *Lexer) Discard() {
 	}
 }
 
-// Pos returns the position (rune offset) of the last rune read.
+// Pos returns the position (rune offset) of the last rune read. Returns -1
+// if no input has been read yet.
 //
 func (l *Lexer) Pos() token.Pos {
 	if l.b {
@@ -263,7 +277,7 @@ func (l *Lexer) Pos() token.Pos {
 }
 
 // Last returns the last rune read. May panic if called without a previous call
-// to Next() since the last Discard(), Emit() or Errorf().
+// to Next since the last call to Emit or transition to the initial state.
 //
 func (l *Lexer) Last() rune {
 	if l.b {
