@@ -161,7 +161,7 @@ func Example_go() {
 	// Type(5) "var"
 	// Type(5) "str"
 	// Type(7) '='
-	// Type(2) "some\tstring"
+	// Type(3) "some\tstring"
 	// Type(0) ';'
 	// Type(5) "var"
 	// Type(5) "flt"
