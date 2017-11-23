@@ -23,7 +23,7 @@
 //
 // According to the convention on Lexer.StateFn, all state functions expect that
 // the first character that is part of the lexed entity has already been read by
-// Lexer.Next() and will be retrieved by the state function via Lexer.Last.
+// Lexer.Next and will be retrieved by the state function via Lexer.Current.
 //
 // All functions (with the exception of EOF) are in fact constructors that
 // take a at least a token type as argument and return closures. Note that
@@ -62,7 +62,7 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.Stat
 	b := make([]byte, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
 		b = b[:0]
-		r := l.Last()
+		r := l.Current()
 		pos := l.Pos()
 		base := 10
 		switch r {
@@ -109,7 +109,7 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.Stat
 // or exponent 'e' rune has already been consumed (and no other rune than these).
 //
 func numFP(l *lexer.Lexer, t token.Type, b []byte) lexer.StateFn {
-	r := l.Last()
+	r := l.Current()
 	if r != 'e' {
 		// decimal separator
 		b = append(b, '.')
@@ -178,7 +178,7 @@ func Int(t token.Type, base int) lexer.StateFn {
 	b := make([]byte, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
 		b = b[:0]
-		r := l.Last()
+		r := l.Current()
 		for {
 			rl := unicode.ToLower(r)
 			if rl >= 'a' {
@@ -264,7 +264,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 	var rb [utf8.UTFMax]byte
 	return func(l *lexer.Lexer) lexer.StateFn {
 		s = s[:0]
-		quote := l.Last()
+		quote := l.Current()
 		pos := l.Pos()
 		for {
 			r, err := readChar(l, quote)
@@ -288,7 +288,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 				l.Errorf(l.Pos(), msg[err])
 				return terminateString(l, quote)
 			case errInvalidHex, errInvalidOctal:
-				l.Errorf(l.Pos(), msg[err], l.Last())
+				l.Errorf(l.Pos(), msg[err], l.Current())
 				return terminateString(l, quote)
 			}
 		}
@@ -302,7 +302,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 //
 func QuotedChar(t token.Type) lexer.StateFn {
 	return func(l *lexer.Lexer) lexer.StateFn {
-		quote := l.Last()
+		quote := l.Current()
 		pos := l.Pos()
 		r, err := readChar(l, quote)
 		switch err {
@@ -327,7 +327,7 @@ func QuotedChar(t token.Type) lexer.StateFn {
 			l.Errorf(l.Pos(), msg[err])
 			return terminateString(l, quote)
 		case errInvalidHex, errInvalidOctal:
-			l.Errorf(l.Pos(), msg[err], l.Last())
+			l.Errorf(l.Pos(), msg[err], l.Current())
 			return terminateString(l, quote)
 		default:
 			panic("unexpected return value from readChar")

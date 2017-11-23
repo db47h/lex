@@ -42,8 +42,8 @@ func tgInit() lexer.StateFn {
 	ident := identifier()
 
 	return func(l *lexer.Lexer) lexer.StateFn {
-		// get next rune
-		r := l.Next()
+		// get current rune (read for us by the lexer upon entering the initial state)
+		r := l.Current()
 		// THE big switch
 		switch r {
 		case lexer.EOF:
@@ -76,7 +76,7 @@ func tgInit() lexer.StateFn {
 				return bin
 			default:
 				// At this point, the input could be an octal integer or a float with a leading 0.
-				// Also, l.Last() would return the character following the leading 0, so we un-read
+				// Also, l.Current() would return the character following the leading 0, so we un-read
 				// it to that state.Number() can see that leading 0 and properly identify octal integer
 				// literals.
 				l.Backup()
@@ -119,7 +119,7 @@ func identifier() lexer.StateFn {
 	b := make([]rune, 0, 64)
 	return func(l *lexer.Lexer) lexer.StateFn {
 		// reset buffer and add first char
-		b = append(b[:0], l.Last())
+		b = append(b[:0], l.Current())
 		// read identifier
 		for r := l.Next(); unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'; r = l.Next() {
 			b = append(b, r)

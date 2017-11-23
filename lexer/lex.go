@@ -124,12 +124,12 @@ type Lexer struct {
 // A StateFn is a state function.
 //
 // As a convention, when a StateFn is called, the input that lead to that state
-// has already been scanned and can be retrieved with Lexer.Last(). For example,
-// a state function that lexes numbers will have to call Last() to get the first
+// has already been scanned and can be retrieved with Current. For example, a
+// state function that lexes numbers will have to call Current to get the first
 // digit.
 //
-// If a StateFn returns nil, the lexer resets the current token start position
-// then transitions back to its initial state function.
+// If a StateFn returns nil, the lexer resets the current token start position,
+// reads the next character, then transitions back to its initial state function.
 //
 type StateFn func(l *Lexer) StateFn
 
@@ -157,6 +157,7 @@ func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
 		if l.state == nil {
 			l.updateStart()
+			l.Next()
 			l.state = l.I(l)
 		} else {
 			l.state = l.state(l)
@@ -226,7 +227,8 @@ func (l *Lexer) Next() rune {
 	return l.next()
 }
 
-// Peek returns the next rune in the input stream without consuming it.
+// Peek returns the next rune in the input stream without consuming it. This
+// is equivalent to calling Next followed by Backup.
 //
 func (l *Lexer) Peek() rune {
 	if l.b {
@@ -258,7 +260,7 @@ func (l *Lexer) updateStart() {
 	}
 }
 
-// Pos returns the position (rune offset) of the last rune read. Returns -1
+// Pos returns the position (rune offset) of the current rune. Returns -1
 // if no input has been read yet.
 //
 func (l *Lexer) Pos() token.Pos {
@@ -268,10 +270,10 @@ func (l *Lexer) Pos() token.Pos {
 	return l.n - 1
 }
 
-// Last returns the last rune read. May panic if called without a previous call
-// to Next since the last call to Emit or transition to the initial state.
+// Current returns the current rune. This is the last rune read by Next
+// or the previous one if Backup has been called after Next.
 //
-func (l *Lexer) Last() rune {
+func (l *Lexer) Current() rune {
 	if l.b {
 		return l.p
 	}

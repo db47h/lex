@@ -8,7 +8,7 @@ graceful handling of EOF.
 
 According to the convention on Lexer.StateFn, all state functions expect that
 the first character that is part of the lexed entity has already been read by
-Lexer.Next() and will be retrieved by the state function via Lexer.Last.
+Lexer.Next and will be retrieved by the state function via Lexer.Current.
 
 All functions (with the exception of EOF) are in fact constructors that
 take a at least a token type as argument and return closures. Note that
