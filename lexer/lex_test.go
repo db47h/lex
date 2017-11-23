@@ -45,9 +45,9 @@ func tString(i *lexer.Item) string {
 func TestLexer_Next(t *testing.T) {
 	var l *lexer.Lexer
 	next := func() rune { return l.Next() }
-	last := func() rune { return l.Last() }
+	cur := func() rune { return l.Current() }
 	peek := func() rune { return l.Peek() }
-	backup := func() rune { l.Backup(); return l.Last() }
+	backup := func() rune { l.Backup(); return l.Current() }
 
 	input := []string{
 		"ab",
@@ -63,11 +63,11 @@ func TestLexer_Next(t *testing.T) {
 	}{
 		{
 			{"an", next, 0, 'a'},
-			{"al", last, 0, 'a'},
+			{"al", cur, 0, 'a'},
 			{"bn1", next, 1, 'b'},
-			{"bl1", last, 1, 'b'},
+			{"bl1", cur, 1, 'b'},
 			{"bb", backup, 0, 'a'},
-			{"bl2", last, 0, 'a'},
+			{"bl2", cur, 0, 'a'},
 			{"bp1", peek, 0, 'b'},
 			{"bn2", next, 1, 'b'},
 			{"bp2", peek, 1, lexer.EOF},
@@ -81,7 +81,7 @@ func TestLexer_Next(t *testing.T) {
 		},
 		{
 			{"cn", next, 0, 'c'},
-			{"cb", backup, -1, '\x00'}, // Pos() is invalid and Last() is garbage.
+			{"cb", backup, -1, '\x00'}, // Pos() is invalid and Current() is garbage.
 			{"cn", next, 0, 'c'},
 			{"eofn", next, 1, lexer.EOF},
 		},
@@ -141,7 +141,7 @@ func TestLexer_Lex(t *testing.T) {
 	stateNum := func(l *lexer.Lexer) lexer.StateFn {
 		num = 0
 		base = 10
-		r := l.Last()
+		r := l.Current()
 		if r == '0' {
 			if l.Accept('x') || l.Accept('X') {
 				base = 16
@@ -172,7 +172,7 @@ func TestLexer_Lex(t *testing.T) {
 	}
 	l := lexer.New(f,
 		func(l *lexer.Lexer) lexer.StateFn {
-			r := l.Next()
+			r := l.Current()
 			switch r {
 			case lexer.EOF:
 				return stateEOF
