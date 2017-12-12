@@ -103,7 +103,8 @@ type Interface interface {
 //
 type Lexer struct {
 	// Current initial-state function. It can be used by state functions to
-	// implement context switches (e.g. switch to a JS lexer while parsing HTML, etc.)
+	// implement context switches (e.g. switch from accepting plain text to
+	// expressions in a template like language).
 	// by setting this value to another init function then return nil.
 	I StateFn
 	// Start position of current token. Used as token position by Emit.

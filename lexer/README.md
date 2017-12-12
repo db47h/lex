@@ -15,7 +15,7 @@ The implementation is similar to <a href="https://golang.org/src/text/template/p
 Se also Rob Pike's talk about combining states and actions into state functions:
 <a href="https://talks.golang.org/2011/lex.slide">https://talks.golang.org/2011/lex.slide</a>.
 
-TL;DR: A state machine can be implemented like this:
+TL;DR: State machines are often implemented with a switch statement:
 
 
 	// One iteration:
@@ -70,8 +70,8 @@ simple as a nil return.
 Second, the lexer keeps track of the offset in the input stream at the time of
 entering the initial state. This offset is the start position of the current
 token (as used by Emit). This position is automatically updated on a nil return.
-This could be taken out of the lexer, but client code would then need to handle
-it with no real benefit. For the exceptional case where this pattern does not
+This could be taken out of the lexer, but client code would then have to handle
+it with no added benefit. For the exceptional case where this pattern does not
 apply, state functions can adjust the start position as needed before calling
 Emit.
 
@@ -90,16 +90,17 @@ Upon returning nil from a StateFn, the lexer will do the following:
 	l.S = l.Pos()			// update start position of the current token
 	l.nextState = l.I(l)	// call the initial state function
 
-All StateFn must be written so that upon entering the function, the first
+A StateFn must be written so that upon entering the function, the first
 character relevant to that function has already been read and can be retrieved
-by a call to Currwnt. Additionally, a StateFn is not allowed to call Backup for
+by a call to Current. Additionally, a StateFn is not allowed to call Backup for
 that first character since the previous state may already have called Backup
 before switching states. This is to allow state functions to look-ahead one more
 character before switching state and, as a result, minimize the number of
 intermediary states.
 
-With this in mind, returning a direct reference to the initial state function is
-not recommended (but still possible for some edge cases).
+Transitions to the initial state should be done by returning nil from a StateFn.
+Client code that does not use this idiom must take care of updating Lexer.S and
+calling Lexer.Next before the state transition.
 
 EOF conditions must be handled manually. This means that at the very least, the
 initial state function should always check for EOF and emit an item of type

@@ -32,7 +32,7 @@
 //
 package state
 
-//go:generate bash -c "godoc2md -ex -template ../../README.tpl github.com/db47h/parsekit/lexer/state >README.md"
+//go:generate bash -c "godoc2md -ex -template ../../template/README.md.tpl github.com/db47h/parsekit/lexer/state >README.md"
 
 import (
 	"math/big"
