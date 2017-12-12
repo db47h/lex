@@ -21,9 +21,15 @@
 // quoted characters and numbers (integers in any base as well as floats) and
 // graceful handling of EOF.
 //
-// According to the convention on Lexer.StateFn, all state functions expect that
-// the first character that is part of the lexed entity has already been read by
-// Lexer.Next and will be retrieved by the state function via Lexer.Current.
+// All state functions in this package expect that the first character that is
+// part of the lexed entity has already been read by Lexer.Next. For example:
+//
+//	r := l.Next()
+//	switch r {
+//	case '"':
+//		// do not call l.Backup() here
+//		return state.QuotedString(tokString)
+//	}
 //
 // All functions (with the exception of EOF) are in fact constructors that
 // take a at least a token type as argument and return closures. Note that
@@ -67,6 +73,10 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.Stat
 		base := 10
 		switch r {
 		case decimalSep:
+			if r = l.Peek(); r < '0' || '9' < r {
+				l.Errorf(l.Pos(), "invalid character %#U following a leading decimal separator", r)
+				return nil
+			}
 			return numFP(l, tokFloat, b)
 		case '0':
 			if octal {

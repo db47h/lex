@@ -124,13 +124,8 @@ type Lexer struct {
 
 // A StateFn is a state function.
 //
-// As a convention, when a StateFn is called, the input that lead to that state
-// has already been scanned and can be retrieved with Current. For example, a
-// state function that lexes numbers will have to call Current to get the first
-// digit.
-//
-// If a StateFn returns nil, the lexer resets the current token start position,
-// reads the next character, then transitions back to its initial state function.
+// If a StateFn returns nil, the lexer resets the current token start position
+// then transitions back to its initial state function.
 //
 type StateFn func(l *Lexer) StateFn
 
@@ -158,7 +153,6 @@ func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
 		if l.state == nil {
 			l.updateStart()
-			l.Next()
 			l.state = l.I(l)
 		} else {
 			l.state = l.state(l)

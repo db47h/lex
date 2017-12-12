@@ -141,18 +141,17 @@ func TestLexer_Lex(t *testing.T) {
 	stateNum := func(l *lexer.Lexer) lexer.StateFn {
 		num = 0
 		base = 10
-		r := l.Current()
+		r := l.Next()
 		if r == '0' {
 			if l.Accept('x') || l.Accept('X') {
 				base = 16
 			} else {
 				base = 8
 			}
-			r = l.Next()
+		} else {
+			l.Backup()
 		}
-		if scanDigit(r) {
-			l.AcceptWhile(scanDigit)
-		}
+		l.AcceptWhile(scanDigit)
 		l.Emit(0, big.NewInt(num))
 		if base == 8 {
 			l.Errorf(l.Pos(), "piling up")
@@ -172,11 +171,12 @@ func TestLexer_Lex(t *testing.T) {
 	}
 	l := lexer.New(f,
 		func(l *lexer.Lexer) lexer.StateFn {
-			r := l.Current()
+			r := l.Next()
 			switch r {
 			case lexer.EOF:
 				return stateEOF
 			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				l.Backup()
 				return stateNum
 			case '|':
 				// end marker

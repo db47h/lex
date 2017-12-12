@@ -43,7 +43,7 @@ func tgInit() lexer.StateFn {
 
 	return func(l *lexer.Lexer) lexer.StateFn {
 		// get current rune (read for us by the lexer upon entering the initial state)
-		r := l.Current()
+		r := l.Next()
 		// THE big switch
 		switch r {
 		case lexer.EOF:
@@ -67,12 +67,10 @@ func tgInit() lexer.StateFn {
 			case 'x', 'X':
 				// 0x: hexadecimal int.
 				// read the first digit following 'x' before switching to the next state.
-				l.Next()
 				return hex
 			case 'b', 'B':
 				// 0b: binary int.
 				// read the first digit following 'b' before switching to the next state.
-				l.Next()
 				return bin
 			default:
 				// At this point, the input could be an octal integer or a float with a leading 0.

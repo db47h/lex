@@ -94,7 +94,7 @@ func Test_QuotedString(t *testing.T) {
 		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
 	}
 	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Current()
+		r := l.Next()
 		switch r {
 		case '"':
 			return state.QuotedString(tokString)
@@ -118,7 +118,7 @@ func Test_QuotedChar(t *testing.T) {
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 	}
 	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Current()
+		r := l.Next()
 		switch r {
 		case '\'':
 			return state.QuotedChar(tokChar)
@@ -141,7 +141,7 @@ func Test_Int(t *testing.T) {
 		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 immediate value"}},
 	}
 	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Current()
+		r := l.Next()
 		switch r {
 		case '0':
 			r = l.Next()
@@ -193,7 +193,7 @@ func Test_Number(t *testing.T) {
 		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 immediate value`, `1:6 COLON`}},
 	}
 	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Current()
+		r := l.Next()
 		switch r {
 		case '.':
 			r = l.Peek()
@@ -227,7 +227,7 @@ func ExampleNumber() {
 	input := "0 0. 1e10 1.2e1"
 	f := token.NewFile("", strings.NewReader(input))
 	l := lexer.New(f, func(l *lexer.Lexer) lexer.StateFn {
-		r := l.Current()
+		r := l.Next()
 		switch r {
 		case lexer.EOF:
 			return state.EOF

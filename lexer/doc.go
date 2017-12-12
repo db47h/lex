@@ -99,27 +99,18 @@ Implementing a custom lexer
 A lexer for any given language is simply a set of state functions referencing
 each other. The initial state of the DFA is the state where we expect to read a
 new token. Depending on the input, that initial StateFn returns the appropriate
-StateFn as the next state. The returned StateFn repeats that process until a
-match is eventually found for a token. At this point the StateFn calls Emit and
+StateFn as the next state. The returned StateFn repeats this process until a
+match is eventually found for a token, at this point the StateFn calls Emit and
 returns nil so that the DFA transitions back to the initial state.
 
 Upon returning nil from a StateFn, the lexer will do the following:
 
-	l.Next()				// read next character (see rules below)
 	l.S = l.Pos()			// update start position of the current token
 	l.nextState = l.I(l)	// call the initial state function
 
-A StateFn must be written so that upon entering the function, the first
-character relevant to that function has already been read and can be retrieved
-by a call to Current. Additionally, a StateFn is not allowed to call Backup for
-that first character since the previous state may already have called Backup
-before switching states. This is to allow state functions to look-ahead one more
-character before switching state and, as a result, minimize the number of
-intermediary states.
-
 Transitions to the initial state should be done by returning nil from a StateFn.
-Client code that does not use this idiom must take care of updating Lexer.S and
-calling Lexer.Next before the state transition.
+Client code that does not use this idiom must take care of updating Lexer.S
+before the state transition.
 
 EOF conditions must be handled manually. This means that at the very least, the
 initial state function should always check for EOF and emit an item of type
@@ -131,7 +122,11 @@ terminator.
 
 The state sub-package provides state functions for lexing quoted strings,
 quoted characters and numbers (integers in any base as well as floats) and
-graceful handling of EOF.
+graceful handling of EOF. It is worth mentioning that all functions in the state
+package expect that the first character that is part of the lexed entity has
+already been read by Lexer.Next. While this is a useful convention in the
+context of that package (it allows client code to look ahead further in the
+input stream), it does not apply to custom state functions in client code.
 
 */
 package lexer
