@@ -102,11 +102,6 @@ type Interface interface {
 // functions.
 //
 type Lexer struct {
-	// Current initial-state function. It can be used by state functions to
-	// implement context switches (e.g. switch from accepting plain text to
-	// expressions in a template like language).
-	// by setting this value to another init function then return nil.
-	I StateFn
 	// Start position of current token. Used as token position by Emit.
 	// calling Emit or returning nil from a StateFn resets its value to Pos() + 1.
 	// State functions should normally not need to read or change this value.
@@ -116,10 +111,11 @@ type Lexer struct {
 	n     token.Pos // position of next rune to read
 	l     int       // line count
 	q     *queue    // Item queue
-	state StateFn
-	r     rune // last rune read by Next
-	p     rune // previous rune
-	b     bool // true if backed-up
+	state StateFn   // current state
+	i     StateFn   // current initial-state function.
+	r     rune      // last rune read by Next
+	p     rune      // previous rune
+	b     bool      // true if backed-up
 }
 
 // A StateFn is a state function.
@@ -137,10 +133,20 @@ func New(f *token.File, init StateFn) Interface {
 	f.AddLine(0, 1)
 	return &Lexer{
 		f: f,
-		I: init,
+		i: init,
 		// initial q size must be an exponent of 2
 		q: &queue{items: make([]Item, 2)},
 	}
+}
+
+// Init (re-)sets the initial state function for the lexer. It can be used by
+// state functions to implement context switches (e.g. switch from accepting
+// plain text to expressions in a template like language). This function returns
+// its argument.
+//
+func (l *Lexer) Init(initState StateFn) StateFn {
+	l.i = initState
+	return initState
 }
 
 // Lex reads source text and returns the next item until EOF.
@@ -153,7 +159,7 @@ func (l *Lexer) Lex() Item {
 	for l.q.count == 0 {
 		if l.state == nil {
 			l.updateStart()
-			l.state = l.I(l)
+			l.state = l.i(l)
 		} else {
 			l.state = l.state(l)
 		}
