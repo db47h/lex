@@ -133,7 +133,7 @@ func Test_QuotedChar(t *testing.T) {
 	})
 }
 
-func Test_Int(t *testing.T) {
+func TestInt(t *testing.T) {
 	var td = []testData{
 		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
 		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:19 Error malformed base 2 immediate value"}},

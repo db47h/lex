@@ -133,7 +133,7 @@ func identifier() lexer.StateFn {
 //
 func Example_go() {
 	input := `var str = "some\tstring"
-	var flt = 1.275`
+	var flt = -1.275`
 
 	// initialize lexer.
 	//
@@ -164,5 +164,6 @@ func Example_go() {
 	// Type(5) "var"
 	// Type(5) "flt"
 	// Type(7) '='
+	// Type(7) '-'
 	// Type(2) 1.275
 }
