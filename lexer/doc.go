@@ -114,10 +114,10 @@ before the state transition.
 
 EOF conditions must be handled manually. This means that at the very least, the
 initial state function should always check for EOF and emit an item of type
-token.EOF. Other states should not have to deal with it explicitely. i.e. EOF is
+token.EOF. Other states should not have to deal with it explicitly. i.e. EOF is
 not a valid rune, as such unicode.IsDigit() will return false, so will IsSpace.
 A common exception is tokens that need a terminator (like quoted strings) where
-EOF should be checked explicitely in order to emit errors in the absence of a
+EOF should be checked explicitly in order to emit errors in the absence of a
 terminator.
 
 The state sub-package provides state functions for lexing quoted strings,
