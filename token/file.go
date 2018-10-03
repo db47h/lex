@@ -5,11 +5,6 @@ import (
 	"io"
 )
 
-const (
-	bufSz = 256
-	mask  = (bufSz - 1)
-)
-
 // Position describes an arbitrary source position including the file, line, and column location.
 //
 type Position struct {
@@ -27,17 +22,17 @@ func (p Position) String() string {
 // handles file offset to line/column conversion.
 //
 type File struct {
-	name  string
-	r     io.RuneReader
+	name string
+	io.Reader
 	lines []Pos // 0-based line/Pos information
 }
 
 // NewFile returns a new File.
 //
-func NewFile(name string, r io.RuneReader) *File {
+func NewFile(name string, r io.Reader) *File {
 	return &File{
-		name: name,
-		r:    r,
+		name:   name,
+		Reader: r,
 	}
 }
 
@@ -45,12 +40,6 @@ func NewFile(name string, r io.RuneReader) *File {
 //
 func (f *File) Name() string {
 	return f.name
-}
-
-// ReadRune implements io.RuneReader
-//
-func (f *File) ReadRune() (r rune, sz int, err error) {
-	return f.r.ReadRune()
 }
 
 // AddLine adds a new line at the given offset.
@@ -62,8 +51,9 @@ func (f *File) ReadRune() (r rune, sz int, err error) {
 //
 func (f *File) AddLine(pos Pos, line int) {
 	l := len(f.lines)
-	if l := len(f.lines); l > 0 && f.lines[l-1] >= pos {
-		panic("invalid position")
+	if l > 0 && f.lines[l-1] >= pos {
+		// line already known
+		return
 	}
 	if l+1 != line {
 		panic("invalid line number")

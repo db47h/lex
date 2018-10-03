@@ -44,9 +44,8 @@ func tString(t token.Type, p token.Pos, v interface{}) string {
 // Test proper behavior of Next/Peek/Backup
 func TestLexer_Next(t *testing.T) {
 	next := func(l *lexer.State) rune { return l.Next() }
-	cur := func(l *lexer.State) rune { return l.Current() }
 	peek := func(l *lexer.State) rune { return l.Peek() }
-	backup := func(l *lexer.State) rune { l.Backup(); return l.Current() }
+	backup := func(l *lexer.State) rune { l.Backup(); return 0 }
 
 	input := []string{
 		"ab",
@@ -62,27 +61,33 @@ func TestLexer_Next(t *testing.T) {
 	}{
 		{
 			{"an", next, 0, 'a'},
-			{"al", cur, 0, 'a'},
 			{"bn1", next, 1, 'b'},
-			{"bl1", cur, 1, 'b'},
-			{"bb", backup, 0, 'a'},
-			{"bl2", cur, 0, 'a'},
+			{"bb", backup, 0, 0},
 			{"bp1", peek, 0, 'b'},
 			{"bn2", next, 1, 'b'},
+			{"bn3", next, 2, lexer.EOF},
+			{"bb1", backup, 1, 0},
 			{"bp2", peek, 1, lexer.EOF},
 			{"eof1", next, 2, lexer.EOF},
-			{"eofb", backup, 1, 'b'},
+			{"eofb", backup, 1, 0},
 			{"eof2", next, 2, lexer.EOF},
 			{"eof3", next, 2, lexer.EOF},
-			{"eofp1", peek, 2, lexer.EOF},
-			{"eofb2", backup, 1, 'b'},
+			{"eofb2", backup, 1, 0},
 			{"eofp2", peek, 1, lexer.EOF},
 		},
 		{
-			{"cn", next, 0, 'c'},
-			{"cb", backup, -1, '\x00'}, // Pos() is invalid and Current() is garbage.
-			{"cn", next, 0, 'c'},
-			{"eofn", next, 1, lexer.EOF},
+			{"cn0", next, 0, 'c'},
+			{"cbb0", backup, 0, 0},
+			{"cn1", next, 0, 'c'},
+			{"cbb1", backup, 0, 0},
+			{"cn2", next, 0, 'c'},
+			{"cn3", next, 1, lexer.EOF},
+			{"eof0", next, 1, lexer.EOF},
+			{"eof1", next, 1, lexer.EOF},
+			{"eof2", next, 1, lexer.EOF},
+			{"eofb", backup, 0, 0}, // unread EOF
+			{"eofb", backup, 0, 0}, // here, Pos is garbage
+			{"cn4", next, 0, 'c'},
 		},
 		{
 			{"nl1", next, 0, '\n'},
@@ -94,6 +99,9 @@ func TestLexer_Next(t *testing.T) {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			lexer.New(token.NewFile("", strings.NewReader(in)), func(l *lexer.State) lexer.StateFn {
 				for _, td := range data[i] {
+					if td.name == "cb0" {
+						t.Log("cb0")
+					}
 					r := td.fn(l)
 					if r != td.r {
 						t.Errorf("%s: expected %q, got %q", td.name, td.r, r)
@@ -102,6 +110,9 @@ func TestLexer_Next(t *testing.T) {
 						t.Errorf("%s: expected pos %d, got %d", td.name, td.p, l.Pos())
 					}
 					l.Emit(token.EOF, nil)
+					if t.Failed() {
+						return nil
+					}
 				}
 				return nil
 			}).Lex()
@@ -132,24 +143,26 @@ func TestLexer_Lex(t *testing.T) {
 		return false
 	}
 
-	stateNum := func(l *lexer.State) lexer.StateFn {
+	stateNum := func(s *lexer.State) lexer.StateFn {
 		num = 0
 		base = 10
-		r := l.Next()
+		r := s.Next()
 		if r == '0' {
-			if l.Accept('x') || l.Accept('X') {
+			r = s.Next()
+			if r == 'x' || r == 'X' {
 				base = 16
 			} else {
+				s.Backup()
 				base = 8
 			}
 		} else {
-			l.Backup()
+			s.Backup()
 		}
-		l.AcceptWhile(scanDigit)
-		l.Emit(0, int(num))
+		s.AcceptWhile(scanDigit)
+		s.Emit(0, int(num))
 		if base == 8 {
-			l.Errorf(l.Pos(), "piling up")
-			l.Errorf(l.Pos(), "things")
+			s.Errorf(s.Pos(), "piling up")
+			s.Errorf(s.Pos(), "things")
 		}
 		return nil
 	}

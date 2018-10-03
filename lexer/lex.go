@@ -22,8 +22,15 @@ package lexer
 import (
 	"fmt"
 	"io"
+	"unicode/utf8"
 
 	"github.com/db47h/parsekit/token"
+)
+
+const (
+	undoSZ    = 8
+	undoMask  = undoSZ - 1
+	keepBytes = undoSZ * utf8.UTFMax
 )
 
 // queue is a FIFO queue.
@@ -83,20 +90,18 @@ type Lexer state
 type State state
 
 type state struct {
-	queue // Item queue
-	// Start position of current token. Used as token position by Emit.
-	// calling Emit or returning nil from a StateFn resets its value to Pos() + 1.
-	// State functions should normally not need to read or change this value.
-	S token.Pos
-
+	buf   [4 << 10]byte // byte buffer
+	undo  [undoSZ]int   // undo indices
+	queue               // Item queue
 	f     *token.File
-	n     token.Pos // position of next rune to read
-	l     int       // line count
+	line  int       // line count
 	state StateFn   // current state
-	i     StateFn   // current initial-state function.
-	r     rune      // last rune read by Next
-	p     rune      // previous rune
-	b     bool      // true if backed-up
+	init  StateFn   // current initial-state function.
+	offs  int       // offset of first byte in buffer
+	r, w  int       // read/write indices
+	u     int       // undo index
+	ts    token.Pos // token start position
+	ioErr error     // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
@@ -110,14 +115,17 @@ type StateFn func(l *State) StateFn
 // must be created for every source file to be lexed.
 //
 func New(f *token.File, init StateFn) *Lexer {
-	// add line 1 to file
-	f.AddLine(0, 1)
-	return (*Lexer)(&state{
+	s := &state{
 		// initial q size must be an exponent of 2
 		queue: queue{items: make([]item, 2)},
 		f:     f,
-		i:     init,
-	})
+		line:  1,
+		init:  init,
+	}
+
+	f.AddLine(0, 1)          // add line 1 to file
+	s.buf[0] = utf8.RuneSelf // sentinel value
+	return (*Lexer)(s)
 }
 
 // Init (re-)sets the initial state function for the lexer. It can be used by
@@ -125,8 +133,8 @@ func New(f *token.File, init StateFn) *Lexer {
 // plain text to expressions in a template like language). This function returns
 // its argument.
 //
-func (l *State) Init(initState StateFn) StateFn {
-	l.i = initState
+func (s *State) Init(initState StateFn) StateFn {
+	s.init = initState
 	return initState
 }
 
@@ -141,7 +149,7 @@ func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
 		st := (*State)(l)
 		if l.state == nil {
 			st.updateStart()
-			l.state = l.i(st)
+			l.state = l.init(st)
 		} else {
 			l.state = l.state(st)
 		}
@@ -156,123 +164,149 @@ func (l *Lexer) File() *token.File {
 }
 
 // Emit emits a single token of the given type and value positioned at l.S.
-// Emit sets l.S to the start of the next token (i.e. l.Pos() + 1).
 //
-func (l *State) Emit(t token.Type, value interface{}) {
-	l.push(t, l.S, value)
-	l.updateStart()
+func (s *State) Emit(t token.Type, value interface{}) {
+	s.push(t, s.ts, value)
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
 // of the error and the position set to pos.
 //
-func (l *State) Errorf(pos token.Pos, format string, args ...interface{}) {
-	l.push(token.Error, pos, fmt.Sprintf(format, args...))
-}
-
-func (l *State) next() rune {
-	r, s, err := l.f.ReadRune()
-	l.n++
-	switch {
-	case s == 0:
-		r = EOF
-	case err != nil && err != io.EOF:
-		r = EOF
-		l.Errorf(l.n, err.Error())
-	}
-	if r == '\n' {
-		l.l++
-		l.f.AddLine(l.n, l.l+1)
-	}
-	l.r, l.p = r, l.r
-	return r
+func (s *State) Errorf(pos token.Pos, format string, args ...interface{}) {
+	s.push(token.Error, pos, fmt.Sprintf(format, args...))
 }
 
 // Next returns the next rune in the input stream. IF the end of the stream
 // has ben reached or an IO error occurred, it will return EOF.
 //
-func (l *State) Next() rune {
-	if l.b {
-		l.b = false
-		return l.r
+func (s *State) Next() rune {
+again:
+	for s.r+utf8.UTFMax > s.w && !utf8.FullRune(s.buf[s.r:s.w]) && s.ioErr == nil {
+		s.fill()
 	}
-	if l.r == EOF {
+
+	// Common case: ASCII
+	// Invariant: s.buf[s.w] == utf8.RuneSelf
+	if b := s.buf[s.r]; b < utf8.RuneSelf {
+		s.r++
+		s.u = (s.u + 1) & undoMask
+		s.undo[s.u] = 1
+		if b == 0 {
+			s.Errorf(s.Pos(), "invalid NUL character")
+			goto again
+		}
+		if b == '\n' {
+			s.line++
+			s.f.AddLine(s.Pos()+1, s.line)
+		}
+		return rune(b)
+	}
+
+	// EOF
+	if s.r == s.w {
+		// EOF has 0 length.
+		// Add EOF to undo buffer only if not already 0
+		if s.undo[s.u] != 0 {
+			s.u = (s.u + 1) & undoMask
+			s.undo[s.u] = 0
+		}
+		if s.ioErr != io.EOF {
+			s.Errorf(s.Pos(), "I/O error: "+s.ioErr.Error())
+		}
 		return EOF
 	}
-	return l.next()
+
+	// UTF8
+	r, w := utf8.DecodeRune(s.buf[s.r:s.w])
+	s.r += w
+	s.u = (s.u + 1) & undoMask
+	s.undo[s.u] = w
+	if r == utf8.RuneError && w == 1 {
+		s.Errorf(s.Pos(), "invalid UTF-8 encoding")
+		goto again
+	}
+
+	// BOM only allowed as first rune in the file
+	const BOM = 0xfeff
+	if r == BOM {
+		if s.Pos() > 0 {
+			s.Errorf(s.Pos(), "invalid BOM in the middle of the file")
+		}
+		goto again
+	}
+
+	return r
+}
+
+func (s *State) fill() {
+	// slide buffer contents
+	if s.r > keepBytes {
+		// keep keepBytes in buffer for Backups()
+		n := s.r - keepBytes
+		copy(s.buf[:], s.buf[n:s.w])
+		s.offs += n
+		s.r = keepBytes
+		s.w -= n
+	}
+
+	for i := 0; i < 100; i++ {
+		n, err := s.f.Read(s.buf[s.w : len(s.buf)-1]) // -1 to leave space for sentinel
+		s.w += n
+		if n > 0 || err != nil {
+			s.buf[s.w] = utf8.RuneSelf // sentinel
+			if err != nil {
+				s.ioErr = err
+			}
+			return
+		}
+	}
+
+	s.ioErr = io.ErrNoProgress
+}
+
+func (s *State) updateStart() {
+	s.ts = token.Pos(s.offs + s.r)
 }
 
 // Peek returns the next rune in the input stream without consuming it. This
 // is equivalent to calling Next followed by Backup.
 //
-func (l *State) Peek() rune {
-	if l.b {
-		return l.r
-	}
-	if l.r == EOF {
-		return EOF
-	}
-	l.b = true
-	return l.next()
+func (s *State) Peek() rune {
+	r := s.Next()
+	s.Backup()
+	return r
 }
 
-// Backup reverts the last call to Next.
+// Backup reverts the last call to Next. Backup does not check if the number of
+// backup levels has been exceeded. Use with caution.
+// TODO: implement check.
+// It will be a silent no-op if trying to backup past the start of the file.
 //
-func (l *State) Backup() {
-	if l.b || l.n == 0 {
-		panic("cannot backup twice in a row")
-	}
-	l.b = true
-}
-
-// updateStart sets l.S to l.Pos() + 1.
-//
-func (l *State) updateStart() {
-	if l.b {
-		l.S = l.n - 1
-	} else {
-		l.S = l.n
+func (s *State) Backup() {
+	// if s.r == 0 && EOF in undo buffer (s.undo[s.u] == 0) => valid undo
+	// we should decrement s.u. However, no further backup is possible and
+	// subsequent Next() will still return EOF so we don't check this condition.
+	if s.r > 0 {
+		s.r -= s.undo[s.u]
+		s.u = (s.u - 1) & undoMask
 	}
 }
 
 // Pos returns the position (rune offset) of the current rune. Returns -1
 // if no input has been read yet.
 //
-func (l *State) Pos() token.Pos {
-	if l.b {
-		return l.n - 2
-	}
-	return l.n - 1
-}
-
-// Current returns the current rune. This is the last rune read by Next
-// or the previous one if Backup has been called after Next.
-//
-func (l *State) Current() rune {
-	if l.b {
-		return l.p
-	}
-	return l.r
+func (s *State) Pos() token.Pos {
+	return token.Pos(s.offs + s.r - s.undo[s.u])
 }
 
 // AcceptWhile accepts input while the f function returns true. The return value
 // is the number of runes accepted.
 //
-func (l *State) AcceptWhile(f func(r rune) bool) int {
+func (s *State) AcceptWhile(f func(r rune) bool) int {
 	i := 0
-	for r := l.Next(); f(r); r = l.Next() {
+	for r := s.Next(); f(r); r = s.Next() {
 		i++
 	}
-	l.Backup()
+	s.Backup()
 	return i
-}
-
-// Accept accepts input if it matches r. Returns true if successful.
-//
-func (l *State) Accept(r rune) bool {
-	if l.Peek() != r {
-		return false
-	}
-	l.Next()
-	return true
 }

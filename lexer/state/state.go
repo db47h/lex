@@ -68,8 +68,8 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.Stat
 	b := make([]byte, 0, 64)
 	return func(l *lexer.State) lexer.StateFn {
 		b = b[:0]
-		r := l.Current()
 		pos := l.Pos()
+		r := l.Current()
 		base := 10
 		switch r {
 		case decimalSep:
