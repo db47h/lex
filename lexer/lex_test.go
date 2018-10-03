@@ -2,7 +2,6 @@ package lexer_test
 
 import (
 	"fmt"
-	"math/big"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,29 +24,29 @@ const (
 	tokChar
 )
 
-func tString(i *lexer.Item) string {
-	if i.Type < 0 {
-		return i.String()
-	}
-	switch i.Type {
+func tString(t token.Type, p token.Pos, v interface{}) string {
+	switch t {
+	case token.EOF:
+		return "EOF"
+	case token.Error:
+		return "error: " + v.(string)
 	case tokSpace:
 		return "SPACE"
 	// case tokString:
 	// 	return "STRING " + strconv.Quote(i.Value.(string))
 	case tokChar:
-		return "CHAR " + strconv.QuoteRune(i.Value.(rune))
+		return "CHAR " + strconv.QuoteRune(v.(rune))
 	default:
-		panic(fmt.Sprintf("unknown token type %d", i.Type))
+		panic(fmt.Sprintf("unknown token type %d", t))
 	}
 }
 
 // Test proper behavior of Next/Peek/Backup
 func TestLexer_Next(t *testing.T) {
-	var l *lexer.Lexer
-	next := func() rune { return l.Next() }
-	cur := func() rune { return l.Current() }
-	peek := func() rune { return l.Peek() }
-	backup := func() rune { l.Backup(); return l.Current() }
+	next := func(l *lexer.State) rune { return l.Next() }
+	cur := func(l *lexer.State) rune { return l.Current() }
+	peek := func(l *lexer.State) rune { return l.Peek() }
+	backup := func(l *lexer.State) rune { l.Backup(); return l.Current() }
 
 	input := []string{
 		"ab",
@@ -57,7 +56,7 @@ func TestLexer_Next(t *testing.T) {
 
 	data := [][]struct {
 		name string
-		fn   func() rune
+		fn   func(l *lexer.State) rune
 		p    token.Pos
 		r    rune
 	}{
@@ -92,32 +91,27 @@ func TestLexer_Next(t *testing.T) {
 	}
 
 	for i, in := range input {
-		l = lexer.New(token.NewFile("", strings.NewReader(in)), nil).(*lexer.Lexer)
-		for _, td := range data[i] {
-			t.Run(td.name, func(t *testing.T) {
-				r := td.fn()
-				if r != td.r {
-					t.Errorf("expected %q, got %q", td.r, r)
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			lexer.New(token.NewFile("", strings.NewReader(in)), func(l *lexer.State) lexer.StateFn {
+				for _, td := range data[i] {
+					r := td.fn(l)
+					if r != td.r {
+						t.Errorf("%s: expected %q, got %q", td.name, td.r, r)
+					}
+					if l.Pos() != td.p {
+						t.Errorf("%s: expected pos %d, got %d", td.name, td.p, l.Pos())
+					}
+					l.Emit(token.EOF, nil)
 				}
-				if l.Pos() != td.p {
-					t.Errorf("expected pos %d, got %d", td.p, l.Pos())
-				}
-			})
-		}
-	}
-
-	// check newlines on last test.
-	for i := 0; i < 3; i++ {
-		p := l.File().Position(token.Pos(i))
-		if p.Line != i+1 {
-			t.Errorf("expected line %d, got %d", i+1, p.Line)
-		}
+				return nil
+			}).Lex()
+		})
 	}
 }
 
 func TestLexer_Lex(t *testing.T) {
 	var stateEOF lexer.StateFn
-	stateEOF = func(l *lexer.Lexer) lexer.StateFn {
+	stateEOF = func(l *lexer.State) lexer.StateFn {
 		l.Emit(token.EOF, nil)
 		return stateEOF
 	}
@@ -138,7 +132,7 @@ func TestLexer_Lex(t *testing.T) {
 		return false
 	}
 
-	stateNum := func(l *lexer.Lexer) lexer.StateFn {
+	stateNum := func(l *lexer.State) lexer.StateFn {
 		num = 0
 		base = 10
 		r := l.Next()
@@ -152,25 +146,29 @@ func TestLexer_Lex(t *testing.T) {
 			l.Backup()
 		}
 		l.AcceptWhile(scanDigit)
-		l.Emit(0, big.NewInt(num))
+		l.Emit(0, int(num))
 		if base == 8 {
 			l.Errorf(l.Pos(), "piling up")
 			l.Errorf(l.Pos(), "things")
 		}
 		return nil
 	}
-
+	//                                            01234567890123
 	f := token.NewFile("test", strings.NewReader("0x24 12 0666 |"))
-	r := []string{
-		"Type(0) 36",
-		"Type(0) 12",
-		"Type(0) 438",
-		"Error piling up",
-		"Error things",
-		"EOF",
+	data := []struct {
+		t token.Type
+		p token.Pos
+		v interface{}
+	}{
+		{0, 0, 36},
+		{0, 5, 12},
+		{0, 8, 438},
+		{token.Error, 11, "piling up"},
+		{token.Error, 11, "things"},
+		{token.EOF, 14, nil},
 	}
 	l := lexer.New(f,
-		func(l *lexer.Lexer) lexer.StateFn {
+		func(l *lexer.State) lexer.StateFn {
 			r := l.Next()
 			switch r {
 			case lexer.EOF:
@@ -180,18 +178,18 @@ func TestLexer_Lex(t *testing.T) {
 				return stateNum
 			case '|':
 				// end marker
-				if !l.Expect(lexer.EOF) {
+				if l.Peek() != lexer.EOF {
 					panic("| not @EOF")
 				}
 			}
 			return nil
 		})
-	for i := 0; ; i++ {
-		it := l.Lex()
-		if it.String() != r[i] {
-			t.Errorf("Got: %v, expected: %v", it.String(), r[i])
+	for _, r := range data {
+		tt, p, v := l.Lex()
+		if tt != r.t || p != r.p || v != r.v {
+			t.Errorf("Got: %d %d %v, expected: %d %d %v", tt, p, v, r.t, r.p, r.v)
 		}
-		if it.Type == token.EOF {
+		if tt == token.EOF {
 			break
 		}
 	}

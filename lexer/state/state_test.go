@@ -23,27 +23,43 @@ const (
 	tokRawChar
 )
 
-func itemString(l lexer.Interface, i *lexer.Item) string {
-	p := l.File().Position(i.Pos)
-	s := fmt.Sprintf("%d:%d ", p.Line, p.Column)
-	if i.Type < 0 {
-		return s + i.String()
-	}
-	switch i.Type {
+func itemString(l *lexer.Lexer, t token.Type, p token.Pos, v interface{}) string {
+	var b strings.Builder
+	pos := l.File().Position(p)
+	b.WriteString(fmt.Sprintf("%d:%d ", pos.Line, pos.Column))
+	var ts, vs string
+	switch t {
+	case token.Error:
+		ts = "Error"
+		vs = v.(string)
+	case token.EOF:
+		ts = "EOF"
 	case tokFloat:
-		return s + "FLOAT " + i.Value.(*big.Float).String()
+		ts = "FLOAT"
+		vs = v.(*big.Float).String()
 	case tokInt:
-		return s + "INT " + i.Value.(*big.Int).String()
+		ts = "INT"
+		vs = v.(*big.Int).String()
 	case tokString:
-		return s + "STRING " + strconv.Quote(i.Value.(string))
+		ts = "STRING"
+		vs = strconv.Quote(v.(string))
 	case tokChar:
-		return s + "CHAR " + strconv.QuoteRune(i.Value.(rune))
+		ts = "CHAR"
+		vs = strconv.QuoteRune(v.(rune))
 	case tokRawChar:
-		return s + "RAWCHAR " + strconv.QuoteRune(i.Value.(rune))
+		ts = "RAWCHAR"
+		vs = strconv.QuoteRune(v.(rune))
 	case tokColon:
-		return s + "COLON"
+		ts = "COLON"
+	default:
+		panic("unknown type")
 	}
-	panic("unknown type")
+	b.WriteString(ts)
+	if vs != "" {
+		b.WriteRune(' ')
+		b.WriteString(vs)
+	}
+	return b.String()
 }
 
 type res []string
@@ -55,21 +71,26 @@ type testData struct {
 }
 
 func runTests(t *testing.T, td []testData, init lexer.StateFn) {
+	t.Helper()
 	for _, sample := range td {
 		t.Run(sample.name, func(t *testing.T) {
 			l := lexer.New(token.NewFile(sample.name, strings.NewReader(sample.in)), init)
-			var it lexer.Item
+			var (
+				tt token.Type
+				p  token.Pos
+				v  interface{}
+			)
 			for i := range sample.res {
-				it = l.Lex()
-				got := itemString(l, &it)
+				tt, p, v = l.Lex()
+				got := itemString(l, tt, p, v)
 				if got != sample.res[i] {
 					t.Errorf("\nGot     : %v\nExpected: %v", got, sample.res[i])
 				}
 			}
-			it = l.Lex()
-			if it.Type != token.EOF || int(it.Pos) != utf8.RuneCountInString(sample.in) {
-				p := l.File().Position(token.Pos(utf8.RuneCountInString(sample.in)))
-				t.Errorf("Got: %s (Pos: %d), Expected: %d:%d EOF. ", itemString(l, &it), it.Pos, p.Line, p.Column)
+			tt, p, v = l.Lex()
+			if tt != token.EOF || int(p) != utf8.RuneCountInString(sample.in) {
+				pos := l.File().Position(token.Pos(utf8.RuneCountInString(sample.in)))
+				t.Errorf("Got: %s (Pos: %d), Expected: %d:%d EOF. ", itemString(l, tt, p, v), p, pos.Line, pos.Column)
 			}
 		})
 	}
@@ -93,7 +114,7 @@ func Test_QuotedString(t *testing.T) {
 		{"str10", "\"a\\\n", res{`1:1 Error unterminated string`}},
 		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
 	}
-	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+	runTests(t, td, func(l *lexer.State) lexer.StateFn {
 		r := l.Next()
 		switch r {
 		case '"':
@@ -117,7 +138,7 @@ func Test_QuotedChar(t *testing.T) {
 			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 	}
-	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+	runTests(t, td, func(l *lexer.State) lexer.StateFn {
 		r := l.Next()
 		switch r {
 		case '\'':
@@ -140,7 +161,7 @@ func TestInt(t *testing.T) {
 		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:19 Error malformed base 16 immediate value"}},
 		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 immediate value"}},
 	}
-	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+	runTests(t, td, func(l *lexer.State) lexer.StateFn {
 		r := l.Next()
 		switch r {
 		case '0':
@@ -192,7 +213,7 @@ func Test_Number(t *testing.T) {
 			`1:11 RAWCHAR 'e'`}},
 		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 immediate value`, `1:6 COLON`}},
 	}
-	runTests(t, td, func(l *lexer.Lexer) lexer.StateFn {
+	runTests(t, td, func(l *lexer.State) lexer.StateFn {
 		r := l.Next()
 		switch r {
 		case '.':
@@ -226,7 +247,7 @@ func ExampleNumber() {
 	stateNumber := state.Number(0, 1, '.', false)
 	input := "0 0. 1e10 1.2e1"
 	f := token.NewFile("", strings.NewReader(input))
-	l := lexer.New(f, func(l *lexer.Lexer) lexer.StateFn {
+	l := lexer.New(f, func(l *lexer.State) lexer.StateFn {
 		r := l.Next()
 		switch r {
 		case lexer.EOF:
@@ -237,8 +258,8 @@ func ExampleNumber() {
 			return nil // ignore anything else
 		}
 	})
-	for item := l.Lex(); item.Type != token.EOF; item = l.Lex() {
-		fmt.Printf("%T %v\n", item.Value, item.Value)
+	for tt, _, v := l.Lex(); tt != token.EOF; tt, _, v = l.Lex() {
+		fmt.Printf("%T %v\n", v, v)
 	}
 
 	// Output:

@@ -41,7 +41,7 @@ func tgInit() lexer.StateFn {
 	number := state.Number(goInt, goFloat, '.', true)
 	ident := identifier()
 
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		// get current rune (read for us by the lexer upon entering the initial state)
 		r := l.Next()
 		// THE big switch
@@ -115,7 +115,7 @@ func identifier() lexer.StateFn {
 	// preallocate a buffer to store the identifier. It will end-up being at
 	// least as large as the largest identifier scanned.
 	b := make([]rune, 0, 64)
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		// reset buffer and add first char
 		b = append(b[:0], l.Current())
 		// read identifier
@@ -141,17 +141,17 @@ func Example_go() {
 	l := lexer.New(inputFile, tgInit())
 
 	// loop over each token
-	for item := l.Lex(); item.Type != token.EOF; item = l.Lex() {
+	for tt, _, v := l.Lex(); tt != token.EOF; tt, _, v = l.Lex() {
 		// print the token type and value.
-		switch v := item.Value.(type) {
+		switch v := v.(type) {
 		case nil:
-			fmt.Println(item.Type)
+			fmt.Println(tt)
 		case string:
-			fmt.Println(item.Type, strconv.Quote(v))
+			fmt.Println(tt, strconv.Quote(v))
 		case rune:
-			fmt.Println(item.Type, strconv.QuoteRune(v))
+			fmt.Println(tt, strconv.QuoteRune(v))
 		default:
-			fmt.Println(item.Type, item.Value)
+			fmt.Println(tt, v)
 		}
 	}
 

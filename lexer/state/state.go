@@ -66,7 +66,7 @@ import (
 //
 func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.StateFn {
 	b := make([]byte, 0, 64)
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		b = b[:0]
 		r := l.Current()
 		pos := l.Pos()
@@ -118,7 +118,7 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.Stat
 // numFP lexes the fractional part of a number. The decimal separator
 // or exponent 'e' rune has already been consumed (and no other rune than these).
 //
-func numFP(l *lexer.Lexer, t token.Type, b []byte) lexer.StateFn {
+func numFP(l *lexer.State, t token.Type, b []byte) lexer.StateFn {
 	r := l.Current()
 	if r != 'e' {
 		// decimal separator
@@ -186,7 +186,7 @@ func Int(t token.Type, base int) lexer.StateFn {
 		panic("unsupported number base")
 	}
 	b := make([]byte, 0, 64)
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		b = b[:0]
 		r := l.Current()
 		for {
@@ -233,7 +233,7 @@ func isDigit(r rune) bool {
 // EOF places the lexer in End-Of-File state.
 // Once in this state, the lexer will only emit EOF.
 //
-func EOF(l *lexer.Lexer) lexer.StateFn {
+func EOF(l *lexer.State) lexer.StateFn {
 	l.Emit(token.EOF, nil)
 	return EOF
 }
@@ -272,7 +272,7 @@ var msg = [...]string{
 func QuotedString(t token.Type) lexer.StateFn {
 	s := make([]byte, 0, 64)
 	var rb [utf8.UTFMax]byte
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		s = s[:0]
 		quote := l.Current()
 		pos := l.Pos()
@@ -296,10 +296,10 @@ func QuotedString(t token.Type) lexer.StateFn {
 				return nil // keep going
 			case errInvalidEscape, errInvalidRune:
 				l.Errorf(l.Pos(), msg[err])
-				return terminateString(l, quote)
+				return terminateString(quote)
 			case errInvalidHex, errInvalidOctal:
 				l.Errorf(l.Pos(), msg[err], l.Current())
-				return terminateString(l, quote)
+				return terminateString(quote)
 			}
 		}
 	}
@@ -311,7 +311,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 // will be reused as end-delimiter.
 //
 func QuotedChar(t token.Type) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		quote := l.Current()
 		pos := l.Pos()
 		r, err := readChar(l, quote)
@@ -325,7 +325,7 @@ func QuotedChar(t token.Type) lexer.StateFn {
 			pos = l.Pos()
 			l.Backup() // undo a potential EOF/EOL
 			l.Errorf(pos, msg[errSize])
-			return terminateString(l, quote)
+			return terminateString(quote)
 		case errEnd:
 			l.Errorf(l.Pos(), msg[errEmpty], quote)
 			return nil
@@ -335,10 +335,10 @@ func QuotedChar(t token.Type) lexer.StateFn {
 			return nil // keep going
 		case errInvalidEscape, errInvalidRune:
 			l.Errorf(l.Pos(), msg[err])
-			return terminateString(l, quote)
+			return terminateString(quote)
 		case errInvalidHex, errInvalidOctal:
 			l.Errorf(l.Pos(), msg[err], l.Current())
-			return terminateString(l, quote)
+			return terminateString(quote)
 		default:
 			panic("unexpected return value from readChar")
 		}
@@ -347,8 +347,8 @@ func QuotedChar(t token.Type) lexer.StateFn {
 
 // just eat up string and look for end quote not preceded by '\'
 // TODO: if the rune that caused the error is a \, then our \ handling is off.
-func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
-	return func(l *lexer.Lexer) lexer.StateFn {
+func terminateString(quote rune) lexer.StateFn {
+	return func(l *lexer.State) lexer.StateFn {
 		for {
 			r := l.Next()
 			switch r {
@@ -370,7 +370,7 @@ func terminateString(l *lexer.Lexer, quote rune) lexer.StateFn {
 	}
 }
 
-func readChar(l *lexer.Lexer, quote rune) (r rune, err int) {
+func readChar(l *lexer.State, quote rune) (r rune, err int) {
 	r = l.Next()
 	switch r {
 	case quote:
@@ -430,7 +430,7 @@ func readChar(l *lexer.Lexer, quote rune) (r rune, err int) {
 	return r, errNone
 }
 
-func readDigits(l *lexer.Lexer, n, b int32) (v rune, err int) {
+func readDigits(l *lexer.State, n, b int32) (v rune, err int) {
 	for i := int32(0); i < n; i++ {
 		r := l.Next()
 		if r == '\n' || r == lexer.EOF {
