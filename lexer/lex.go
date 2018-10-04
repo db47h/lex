@@ -28,9 +28,8 @@ import (
 )
 
 const (
-	undoSZ    = 8
-	undoMask  = undoSZ - 1
-	keepBytes = undoSZ * utf8.UTFMax
+	undoSZ   = 8
+	undoMask = undoSZ - 1
 )
 
 // queue is a FIFO queue.
@@ -89,19 +88,24 @@ type Lexer state
 //
 type State state
 
+type undo struct {
+	p token.Pos
+	r rune
+}
+
 type state struct {
-	buf   [4 << 10]byte // byte buffer
-	undo  [undoSZ]int   // undo indices
-	queue               // Item queue
-	f     *token.File
-	line  int       // line count
-	state StateFn   // current state
-	init  StateFn   // current initial-state function.
-	offs  int       // offset of first byte in buffer
-	r, w  int       // read/write indices
-	u     int       // undo index
-	ts    token.Pos // token start position
-	ioErr error     // if not nil, IO error @w
+	buf    [4 << 10]byte // byte buffer
+	undo   [undoSZ]undo  // undo buffer
+	queue                // Item queue
+	f      *token.File
+	line   int       // line count
+	state  StateFn   // current state
+	init   StateFn   // current initial-state function.
+	offs   int       // offset of first byte in buffer
+	r, w   int       // read/write indices
+	ur, uh int       // undo buffer read pos and head
+	ts     token.Pos // token start position
+	ioErr  error     // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
@@ -121,10 +125,19 @@ func New(f *token.File, init StateFn) *Lexer {
 		f:     f,
 		line:  1,
 		init:  init,
+		uh:    1,
 	}
 
-	f.AddLine(0, 1)          // add line 1 to file
-	s.buf[0] = utf8.RuneSelf // sentinel value
+	// add line 1 to file
+	f.AddLine(0, 1)
+	// sentinel values
+	s.buf[0] = utf8.RuneSelf
+	for i := range s.undo {
+		s.undo[i] = undo{-1, utf8.RuneSelf}
+	}
+	// prime Current
+	(*State)(s).Next()
+
 	return (*Lexer)(s)
 }
 
@@ -148,13 +161,22 @@ func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
 	for l.count == 0 {
 		st := (*State)(l)
 		if l.state == nil {
-			st.updateStart()
-			l.state = l.init(st)
+			st.TokenStart(st.Pos())
+			if st.Current() == EOF {
+				l.state = eofState(st)
+			} else {
+				l.state = l.init(st)
+			}
 		} else {
 			l.state = l.state(st)
 		}
 	}
 	return l.pop()
+}
+
+func eofState(s *State) StateFn {
+	s.Emit(token.EOF, nil)
+	return eofState
 }
 
 // File returns the token.File used as input for the lexer.
@@ -180,35 +202,39 @@ func (s *State) Errorf(pos token.Pos, format string, args ...interface{}) {
 // has ben reached or an IO error occurred, it will return EOF.
 //
 func (s *State) Next() rune {
+	// read from undo buffer
+	u := (s.ur + 1) & undoMask
+	if u != s.uh {
+		s.ur = u
+		return s.undo[s.ur].r
+	}
 again:
 	for s.r+utf8.UTFMax > s.w && !utf8.FullRune(s.buf[s.r:s.w]) && s.ioErr == nil {
 		s.fill()
 	}
 
+	pos := token.Pos(s.offs + s.r)
+
 	// Common case: ASCII
 	// Invariant: s.buf[s.w] == utf8.RuneSelf
 	if b := s.buf[s.r]; b < utf8.RuneSelf {
 		s.r++
-		s.u = (s.u + 1) & undoMask
-		s.undo[s.u] = 1
 		if b == 0 {
-			s.Errorf(s.Pos(), "invalid NUL character")
+			s.Errorf(pos, "invalid NUL character")
 			goto again
 		}
 		if b == '\n' {
 			s.line++
-			s.f.AddLine(s.Pos()+1, s.line)
+			s.f.AddLine(pos+1, s.line)
 		}
+		s.pushUndo(pos, rune(b))
 		return rune(b)
 	}
 
 	// EOF
 	if s.r == s.w {
-		// EOF has 0 length.
-		// Add EOF to undo buffer only if not already 0
-		if s.undo[s.u] != 0 {
-			s.u = (s.u + 1) & undoMask
-			s.undo[s.u] = 0
+		if s.undo[s.ur].r != EOF {
+			s.pushUndo(pos, EOF)
 		}
 		if s.ioErr != io.EOF {
 			s.Errorf(s.Pos(), "I/O error: "+s.ioErr.Error())
@@ -219,34 +245,60 @@ again:
 	// UTF8
 	r, w := utf8.DecodeRune(s.buf[s.r:s.w])
 	s.r += w
-	s.u = (s.u + 1) & undoMask
-	s.undo[s.u] = w
 	if r == utf8.RuneError && w == 1 {
-		s.Errorf(s.Pos(), "invalid UTF-8 encoding")
+		s.Errorf(pos, "invalid UTF-8 encoding")
 		goto again
 	}
 
 	// BOM only allowed as first rune in the file
 	const BOM = 0xfeff
 	if r == BOM {
-		if s.Pos() > 0 {
-			s.Errorf(s.Pos(), "invalid BOM in the middle of the file")
+		if pos > 0 {
+			s.Errorf(pos, "invalid BOM in the middle of the file")
 		}
 		goto again
 	}
 
+	s.pushUndo(pos, r)
 	return r
+}
+
+func (s *State) pushUndo(p token.Pos, r rune) {
+	s.ur = s.uh
+	s.undo[s.uh] = undo{p, r}
+	s.uh = (s.uh + 1) & undoMask
+	s.undo[s.uh] = undo{-1, utf8.RuneSelf}
+}
+
+// Backup reverts the last call to Next.
+//
+func (s *State) Backup() {
+	if s.undo[s.ur].p == -1 {
+		return
+	}
+	s.ur = (s.ur - 1) & undoMask
+}
+
+// Current returns the current rune.
+//
+func (s *State) Current() rune {
+	return s.undo[s.ur].r
+}
+
+// Pos returns the position (rune offset) of the current rune. Returns -1
+// if no input has been read yet.
+//
+func (s *State) Pos() token.Pos {
+	return s.undo[s.ur].p
 }
 
 func (s *State) fill() {
 	// slide buffer contents
-	if s.r > keepBytes {
-		// keep keepBytes in buffer for Backups()
-		n := s.r - keepBytes
+	if n := s.r; n > 0 {
 		copy(s.buf[:], s.buf[n:s.w])
 		s.offs += n
-		s.r = keepBytes
 		s.w -= n
+		s.r = 0
 	}
 
 	for i := 0; i < 100; i++ {
@@ -264,8 +316,11 @@ func (s *State) fill() {
 	s.ioErr = io.ErrNoProgress
 }
 
-func (s *State) updateStart() {
-	s.ts = token.Pos(s.offs + s.r)
+// TokenStart sets the token start position reported by Emit(). It is called
+// before calling the initial state function.
+//
+func (s *State) TokenStart(p token.Pos) {
+	s.ts = p
 }
 
 // Peek returns the next rune in the input stream without consuming it. This
@@ -277,36 +332,14 @@ func (s *State) Peek() rune {
 	return r
 }
 
-// Backup reverts the last call to Next. Backup does not check if the number of
-// backup levels has been exceeded. Use with caution.
-// TODO: implement check.
-// It will be a silent no-op if trying to backup past the start of the file.
-//
-func (s *State) Backup() {
-	// if s.r == 0 && EOF in undo buffer (s.undo[s.u] == 0) => valid undo
-	// we should decrement s.u. However, no further backup is possible and
-	// subsequent Next() will still return EOF so we don't check this condition.
-	if s.r > 0 {
-		s.r -= s.undo[s.u]
-		s.u = (s.u - 1) & undoMask
-	}
-}
-
-// Pos returns the position (rune offset) of the current rune. Returns -1
-// if no input has been read yet.
-//
-func (s *State) Pos() token.Pos {
-	return token.Pos(s.offs + s.r - s.undo[s.u])
-}
-
 // AcceptWhile accepts input while the f function returns true. The return value
-// is the number of runes accepted.
+// is the number of runes accepted. AcceptWhile starts with s.Current() and upon
+// exit s.Current() is the first rune for which f returned false.
 //
 func (s *State) AcceptWhile(f func(r rune) bool) int {
 	i := 0
-	for r := s.Next(); f(r); r = s.Next() {
+	for r := s.Current(); f(r); r = s.Next() {
 		i++
 	}
-	s.Backup()
 	return i
 }
