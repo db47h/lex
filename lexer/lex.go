@@ -98,14 +98,13 @@ type state struct {
 	undo   [undoSZ]undo  // undo buffer
 	queue                // Item queue
 	f      *token.File
-	line   int       // line count
-	state  StateFn   // current state
-	init   StateFn   // current initial-state function.
-	offs   int       // offset of first byte in buffer
-	r, w   int       // read/write indices
-	ur, uh int       // undo buffer read pos and head
-	ts     token.Pos // token start position
-	ioErr  error     // if not nil, IO error @w
+	line   int     // line count
+	state  StateFn // current state
+	init   StateFn // current initial-state function.
+	offs   int     // offset of first byte in buffer
+	r, w   int     // read/write indices
+	ur, uh int     // undo buffer read pos and head
+	ioErr  error   // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
@@ -135,8 +134,6 @@ func New(f *token.File, init StateFn) *Lexer {
 	for i := range s.undo {
 		s.undo[i] = undo{-1, utf8.RuneSelf}
 	}
-	// prime Current
-	(*State)(s).Next()
 
 	return (*Lexer)(s)
 }
@@ -161,12 +158,7 @@ func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
 	for l.count == 0 {
 		st := (*State)(l)
 		if l.state == nil {
-			st.TokenStart(st.Pos())
-			if st.Current() == EOF {
-				l.state = eofState(st)
-			} else {
-				l.state = l.init(st)
-			}
+			l.state = l.init(st)
 		} else {
 			l.state = l.state(st)
 		}
@@ -174,9 +166,11 @@ func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
 	return l.pop()
 }
 
-func eofState(s *State) StateFn {
-	s.Emit(token.EOF, nil)
-	return eofState
+// StateEOF is a terminal StateFn that returns EOF.
+//
+func StateEOF(s *State) StateFn {
+	s.Emit(s.Pos(), token.EOF, nil)
+	return StateEOF
 }
 
 // File returns the token.File used as input for the lexer.
@@ -187,15 +181,15 @@ func (l *Lexer) File() *token.File {
 
 // Emit emits a single token of the given type and value positioned at l.S.
 //
-func (s *State) Emit(t token.Type, value interface{}) {
-	s.push(t, s.ts, value)
+func (s *State) Emit(p token.Pos, t token.Type, value interface{}) {
+	s.push(t, p, value)
 }
 
 // Errorf emits an error token. The Item value is set to a string representation
 // of the error and the position set to pos.
 //
-func (s *State) Errorf(pos token.Pos, format string, args ...interface{}) {
-	s.push(token.Error, pos, fmt.Sprintf(format, args...))
+func (s *State) Errorf(p token.Pos, format string, args ...interface{}) {
+	s.push(token.Error, p, fmt.Sprintf(format, args...))
 }
 
 // Next returns the next rune in the input stream. IF the end of the stream
@@ -279,14 +273,14 @@ func (s *State) Backup() {
 	s.ur = (s.ur - 1) & undoMask
 }
 
-// Current returns the current rune.
+// Current returns the last rune returned by State.Next.
 //
 func (s *State) Current() rune {
 	return s.undo[s.ur].r
 }
 
-// Pos returns the position (rune offset) of the current rune. Returns -1
-// if no input has been read yet.
+// Pos returns the position (rune offset) of the last rune returned by Sate.Next.
+// Returns -1 if no input has been read yet.
 //
 func (s *State) Pos() token.Pos {
 	return s.undo[s.ur].p
@@ -316,13 +310,6 @@ func (s *State) fill() {
 	s.ioErr = io.ErrNoProgress
 }
 
-// TokenStart sets the token start position reported by Emit(). It is called
-// before calling the initial state function.
-//
-func (s *State) TokenStart(p token.Pos) {
-	s.ts = p
-}
-
 // Peek returns the next rune in the input stream without consuming it. This
 // is equivalent to calling Next followed by Backup.
 //
@@ -330,16 +317,4 @@ func (s *State) Peek() rune {
 	r := s.Next()
 	s.Backup()
 	return r
-}
-
-// AcceptWhile accepts input while the f function returns true. The return value
-// is the number of runes accepted. AcceptWhile starts with s.Current() and upon
-// exit s.Current() is the first rune for which f returned false.
-//
-func (s *State) AcceptWhile(f func(r rune) bool) int {
-	i := 0
-	for r := s.Current(); f(r); r = s.Next() {
-		i++
-	}
-	return i
 }

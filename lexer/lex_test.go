@@ -47,6 +47,7 @@ func TestLexer_Next(t *testing.T) {
 	next := func(s *lexer.State) rune { return s.Next() }
 	peek := func(s *lexer.State) rune { return s.Peek() }
 	backup := func(s *lexer.State) rune { s.Backup(); return s.Current() }
+	cur := func(s *lexer.State) rune { return s.Current() }
 
 	input := []string{
 		"ab",
@@ -62,7 +63,7 @@ func TestLexer_Next(t *testing.T) {
 		r    rune
 	}{
 		{
-			{"ab", backup, -1, utf8.RuneSelf},
+			{"ab", cur, -1, utf8.RuneSelf},
 			{"an", next, 0, 'a'},
 			{"bn1", next, 1, 'b'},
 			{"bb", backup, 0, 'a'},
@@ -80,7 +81,7 @@ func TestLexer_Next(t *testing.T) {
 			{"eofp2", peek, 1, lexer.EOF},
 		},
 		{
-			{"cb0", backup, -1, utf8.RuneSelf},
+			{"cb0", cur, -1, utf8.RuneSelf},
 			{"cn0", next, 0, 'c'},
 			{"cb1", backup, -1, utf8.RuneSelf},
 			{"cn1", next, 0, 'c'},
@@ -95,12 +96,12 @@ func TestLexer_Next(t *testing.T) {
 			{"cn4", next, 0, 'c'},
 		},
 		{
-			{"nlb", backup, -1, utf8.RuneSelf},
+			{"nlb", cur, -1, utf8.RuneSelf},
 			{"nl1", next, 0, '\n'},
 			{"nl2", peek, 0, '\n'},
 		},
 		{
-			{"ob", backup, -1, utf8.RuneSelf},
+			{"ob", cur, -1, utf8.RuneSelf},
 			{"on0", next, 0, 'a'},
 			{"on1", next, 1, 'b'},
 			{"on2", next, 2, 'c'},
@@ -123,16 +124,16 @@ func TestLexer_Next(t *testing.T) {
 
 	for i, in := range input {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			lexer.New(token.NewFile("", strings.NewReader(in)), func(l *lexer.State) lexer.StateFn {
+			lexer.New(token.NewFile("", strings.NewReader(in)), func(s *lexer.State) lexer.StateFn {
 				for _, td := range data[i] {
-					r := td.fn(l)
+					r := td.fn(s)
 					if r != td.r {
 						t.Errorf("%s: expected %q, got %q", td.name, td.r, r)
 					}
-					if l.Pos() != td.p {
-						t.Errorf("%s: expected pos %d, got %d", td.name, td.p, l.Pos())
+					if s.Pos() != td.p {
+						t.Errorf("%s: expected pos %d, got %d", td.name, td.p, s.Pos())
 					}
-					l.Emit(token.EOF, nil)
+					s.Emit(s.Pos(), token.EOF, nil)
 					if t.Failed() {
 						return nil
 					}
@@ -164,6 +165,7 @@ func TestLexer_Lex(t *testing.T) {
 		num = 0
 		base = 10
 		r := s.Current()
+		p := s.Pos()
 		if r == '0' {
 			r = s.Next()
 			if r == 'x' || r == 'X' {
@@ -173,12 +175,14 @@ func TestLexer_Lex(t *testing.T) {
 				base = 8
 			}
 		}
-		s.AcceptWhile(scanDigit)
-		s.Emit(0, int(num))
-		if base == 8 {
-			s.Errorf(s.Pos(), "piling up")
-			s.Errorf(s.Pos(), "things")
+		for r := s.Current(); scanDigit(r); r = s.Next() {
 		}
+		s.Emit(p, 0, int(num))
+		if base == 8 {
+			s.Errorf(s.Pos(), "test queue")
+			s.Errorf(s.Pos(), "twice")
+		}
+		s.Backup()
 		return nil
 	}
 	//                                            0123456789012
@@ -191,22 +195,22 @@ func TestLexer_Lex(t *testing.T) {
 		{0, 0, 36},
 		{0, 5, 12},
 		{0, 8, 438},
-		{token.Error, 12, "piling up"},
-		{token.Error, 12, "things"},
+		{token.Error, 12, "test queue"},
+		{token.Error, 12, "twice"},
 		{token.EOF, 12, nil},
 	}
 	l := lexer.New(f,
 		func(s *lexer.State) lexer.StateFn {
-			r := s.Current()
+			r := s.Next()
 			switch r {
+			case lexer.EOF:
+				return lexer.StateEOF
 			case ' ', '\t':
 				// ignore spaces
-				s.Next()
 			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 				return stateNum
 			default:
 				s.Errorf(s.Pos(), "invalid character %#U", r)
-				s.Next()
 			}
 			return nil
 		})
