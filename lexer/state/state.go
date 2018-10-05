@@ -17,11 +17,10 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// Package state provides state functions for lexing quoted strings,
-// quoted characters and numbers (integers in any base as well as floats) and
-// graceful handling of EOF.
+// Package state provides state functions for lexing quoted strings and quoted
+// characters.
 //
-// All state functions in this package expect that the first character that is
+// State functions in this package expect that the first character that is
 // part of the lexed entity has already been read by Lexer.Next. For example:
 //
 //	r := l.Next()
@@ -34,209 +33,18 @@
 // All functions (with the exception of EOF) are in fact constructors that
 // take a at least a token type as argument and return closures. Note that
 // because some of these constructors pre-allocate buffers, using the returned
-// state functions concurently is not safe. See the examples for correct usage.
+// state functions concurrently is not safe. See the examples for correct usage.
 //
 package state
 
 //go:generate bash -c "godoc2md -ex -template ../../template/README.md.tpl github.com/db47h/parsekit/lexer/state >README.md"
 
 import (
-	"math/big"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/db47h/parsekit/lexer"
 	"github.com/db47h/parsekit/token"
 )
-
-// Number returns a StateFn that lexes an integer or float literal then emits it
-// with the given type and either *big.Int or *big.Float value. This function
-// expects that the first digit or leading decimal separator has already been
-// read.
-//
-// The tokInt and tokFloat arguments specify the token type to emit for integer
-// and floating point literals respectively. decimalSep is the character used
-// as a decimal separator and the octal parameter indicates if integer literals
-// starting with a leading '0' should be treated as octal numbers.
-//
-// The StateFn returned by this function is not reentrant. This is because Number
-// pre-allocates a buffer for use by the StateFn (that will be reset on every
-// call to the StateFn). As a rule of thumb, do not reuse the return value from
-// Number.
-//
-func Number(tokInt, tokFloat token.Type, decimalSep rune, octal bool) lexer.StateFn {
-	b := make([]byte, 0, 64)
-	return func(l *lexer.State) lexer.StateFn {
-		b = b[:0]
-		pos := l.Pos()
-		r := l.Current()
-		base := 10
-		switch r {
-		case decimalSep:
-			if r = l.Peek(); r < '0' || '9' < r {
-				l.Errorf(l.Pos(), "invalid character %#U following a leading decimal separator", r)
-				return nil
-			}
-			return numFP(l, tokFloat, b)
-		case '0':
-			if octal {
-				base = 8
-			}
-			fallthrough
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			b = append(b, byte(r))
-			for r = l.Next(); isDigit(r); r = l.Next() {
-				b = append(b, byte(r))
-			}
-			if r == decimalSep || r == 'e' {
-				return numFP(l, tokFloat, b)
-			}
-			l.Backup()
-		default:
-			panic("Not a number")
-		}
-
-		// integer
-		if octal && b[0] == '0' {
-			// check digits
-			for i, r := range b[1:] {
-				if r >= '0'+byte(base) {
-					l.Errorf(pos+token.Pos(i)+1, "invalid character %#U in base %d immediate value", r, base)
-					return nil
-				}
-			}
-		}
-		z, _ := new(big.Int).SetString(string(b), base)
-		if z == nil {
-			panic("int conversion failed")
-		}
-		l.Emit(tokInt, z)
-		return nil
-	}
-}
-
-// numFP lexes the fractional part of a number. The decimal separator
-// or exponent 'e' rune has already been consumed (and no other rune than these).
-//
-func numFP(l *lexer.State, t token.Type, b []byte) lexer.StateFn {
-	r := l.Current()
-	if r != 'e' {
-		// decimal separator
-		b = append(b, '.')
-		for r = l.Next(); isDigit(r); r = l.Next() {
-			b = append(b, byte(r))
-		}
-	}
-	if r == 'e' {
-		b = append(b, byte(r))
-		r = l.Next()
-		switch r {
-		case '+', '-':
-			b = append(b, byte(r))
-			r = l.Next()
-		}
-		if !isDigit(r) {
-			// Implementations that wish to implement things like implicit
-			// multiplication, like 24epsilon, cannot use this function as-is.
-			l.Errorf(l.Pos(), "malformed floating-point constant exponent")
-			l.Backup()
-			return nil
-		}
-		for {
-			b = append(b, byte(r))
-			r = l.Next()
-			if !isDigit(r) {
-				break
-			}
-		}
-	}
-	l.Backup()
-
-	z, _, err := big.ParseFloat(string(b), 10, 512, big.ToNearestEven)
-	if err != nil {
-		panic(err)
-	}
-	l.Emit(t, z)
-	return nil
-}
-
-// Int returns a state function that lexes the digits of an int in the given
-// base amd emits it as a big.Int. This function expects that the first digit
-// has been read.
-//
-// Supported bases are 2 to 36.
-//
-// Number lexing stops at the first non-digit character.
-//
-// For bases < 10 any ASCII digit greater than base will cause an error. Lexing
-// will resume at the first non-digit character.
-//
-// The StateFn returned by this function is not reentrant. This is because Int
-// pre-allocates a buffer for use by the StateFn (that will be reset on every
-// call to the StateFn). As a rule of thumb, do not reuse the return value from
-// Int.
-//
-// When entering the StateFn, if the last character read by Lexer.Next() is
-// not a valid digit for the given base (i.e. empty number), this will cause an
-// error and lexing will resume at that character. This may cause an infinite
-// loop if not used properly.
-//
-func Int(t token.Type, base int) lexer.StateFn {
-	if base < 2 || base > 36 {
-		panic("unsupported number base")
-	}
-	b := make([]byte, 0, 64)
-	return func(l *lexer.State) lexer.StateFn {
-		b = b[:0]
-		r := l.Current()
-		for {
-			rl := unicode.ToLower(r)
-			if rl >= 'a' {
-				rl -= 'a' - '0' - 10
-			}
-			rl -= '0'
-			if rl >= 0 && rl < int32(base) {
-				b = append(b, byte(r))
-				r = l.Next()
-				continue
-			}
-			// for bases 2 and 8, consider that an invalid digit is an error instead
-			// of an end of token: error then skip remaining digits.
-			if rl >= int32(base) && rl <= 9 {
-				l.Errorf(l.Pos(), "invalid character %#U in base %d immediate value", r, base)
-				l.AcceptWhile(isDigit) // eat remaining digits
-				return nil
-			}
-			if len(b) == 0 {
-				// no digits!
-				l.Errorf(l.Pos(), "malformed base %d immediate value", base)
-				l.Backup()
-				return nil
-			}
-			l.Backup()
-
-			z := new(big.Int)
-			z, _ = z.SetString(string(b), base)
-			if z == nil {
-				panic("int conversion failed")
-			}
-			l.Emit(t, z)
-			return nil
-		}
-	}
-}
-
-func isDigit(r rune) bool {
-	return r >= '0' && r <= '9'
-}
-
-// EOF places the lexer in End-Of-File state.
-// Once in this state, the lexer will only emit EOF.
-//
-func EOF(l *lexer.State) lexer.StateFn {
-	l.Emit(token.EOF, nil)
-	return EOF
-}
 
 const (
 	errEnd     = -2
@@ -288,7 +96,7 @@ func QuotedString(t token.Type) lexer.StateFn {
 			case errRawByte:
 				s = append(s, byte(r))
 			case errEnd:
-				l.Emit(t, string(s))
+				l.Emit(pos, t, string(s))
 				return nil
 			case errEOL:
 				l.Backup()
@@ -319,7 +127,7 @@ func QuotedChar(t token.Type) lexer.StateFn {
 		case errNone, errRawByte:
 			n := l.Next()
 			if n == quote {
-				l.Emit(t, r)
+				l.Emit(pos, t, r)
 				return nil
 			}
 			pos = l.Pos()
@@ -432,15 +240,19 @@ func readChar(l *lexer.State, quote rune) (r rune, err int) {
 
 func readDigits(l *lexer.State, n, b int32) (v rune, err int) {
 	for i := int32(0); i < n; i++ {
+		var rl rune
 		r := l.Next()
 		if r == '\n' || r == lexer.EOF {
 			return v, errEOL
 		}
-		rl := unicode.ToLower(r)
-		if rl >= 'a' {
-			rl -= 'a' - '0' - 10
+		switch {
+		case r >= 'a':
+			rl = r - 'a' + 10
+		case r >= 'A':
+			rl = r - 'A' + 10
+		default:
+			rl = r - '0'
 		}
-		rl -= '0'
 		if rl < 0 || rl >= b {
 			if b == 8 {
 				return v, errInvalidOctal

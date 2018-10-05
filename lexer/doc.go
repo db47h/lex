@@ -23,8 +23,8 @@ Automaton whose states and associated actions are implemented as functions.
 
 Clients of the package only need to provide state functions specialized in
 lexing the target language. The package provides facilities to stream input
-from a RuneReader (this will be changed in the future to a simple io.Reader)
-with one char look-ahead, as well as utility functions commonly used in lexers.
+from a io.Reader with up to 7 characters look-ahead, as well as utility
+functions commonly used in lexers.
 
 
 State functions
@@ -59,7 +59,8 @@ Then the state transition loop can be rewritten like this:
 	// One iteration:
 	state = state()
 
-
+This package can also be used as a toolbox for a more traditional switch-based
+lexer (see implementation below).
 
 Implementation details
 
@@ -69,30 +70,20 @@ Benchmarks with an earlier implementation that used a channel showed that
 using a FIFO is about 5 times faster. There is also no need for the parser
 to take care of cancellation or draining the input in case of error.
 
-The drawback of using a FIFO is that once a StateFn has called Emit, it must
+The drawback of using a FIFO is that once a StateFn has called Emit, it should
 return as soon as possible so that the caller of Lex (usually a parser) can
-receive the lexed item.
+dequeue the lexed item. Since item queue grows dynamically, it is also possible
+to never return from the initial state function until EOF is reached.
 
 The initial state of the DFA is the state where we expect to read a new token.
 From that initial state, the lexer transitions to other states until a token is
 successfully matched or an error occurs. The state function that found the match
-or error emits the corresonding token and finally returns nil to transition back
-to the initial state.
+or error emits the corresponding token and finally returns nil to transition
+back to the initial state.
 
-The "nil return means initial state" convention is here for two reasons:
-
-First and foremost, enable building a library of state functions for common
-things like quoted strings or numbers where returning to the initial state is as
-simple as a nil return.
-
-Second, the lexer keeps track of the offset in the input stream at the time of
-entering the initial state. This offset is the start position of the current
-token (as used by Emit). This position is automatically updated on a nil return.
-This could be taken out of the lexer, but client code would then have to handle
-it with no added benefit. For the exceptional case where this pattern does not
-apply, state functions can adjust the start position as needed before calling
-Emit.
-
+The "nil return means initial state" convention enables building a library of
+state functions for common things like quoted strings or numbers where returning
+to the initial state is as simple as a nil return.
 
 Implementing a custom lexer
 
@@ -105,28 +96,24 @@ returns nil so that the DFA transitions back to the initial state.
 
 Upon returning nil from a StateFn, the lexer will do the following:
 
-	l.S = l.Pos()			// update start position of the current token
-	l.nextState = l.I(l)	// call the initial state function
+	l.nextState = l.init(l)	// call the initial state function
 
 Transitions to the initial state should be done by returning nil from a StateFn.
-Client code that does not use this idiom must take care of updating Lexer.S
-before the state transition.
 
 EOF conditions must be handled manually. This means that at the very least, the
-initial state function should always check for EOF and emit an item of type
-token.EOF. Other states should not have to deal with it explicitly. i.e. EOF is
-not a valid rune, as such unicode.IsDigit() will return false, so will IsSpace.
+initial state function should always check for EOF and return lexer.StateEOF.
+Other states should not have to deal with it explicitly. i.e. EOF is not a valid
+rune, as such unicode.IsDigit() will return false, so will IsSpace.
 A common exception is tokens that need a terminator (like quoted strings) where
 EOF should be checked explicitly in order to emit errors in the absence of a
 terminator.
 
-The state sub-package provides state functions for lexing quoted strings,
-quoted characters and numbers (integers in any base as well as floats) and
-graceful handling of EOF. It is worth mentioning that all functions in the state
-package expect that the first character that is part of the lexed entity has
-already been read by Lexer.Next. While this is a useful convention in the
-context of that package (it allows client code to look ahead further in the
-input stream), it does not apply to custom state functions in client code.
+The state sub-package provides state functions for lexing quoted strings and
+quoted characters. By convention, all functions in the state package expect that
+the first character that is part of the lexed entity has already been read by
+Lexer.Next. While this is a useful convention in the context of that package (it
+allows client code to look ahead further in the input stream), it does not apply
+to custom state functions in client code.
 
 */
 package lexer

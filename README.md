@@ -2,6 +2,16 @@
 
 Parsekit is a lexer and parser toolbox for Go.
 
+## WIP
+
+This is a work in progress -- although the API has finally stabilized.
+The state package needs some love:
+
+- it is missing a proper number lexer (there used to be one, but cumbersome to
+  use, so it was removed in latest commit).
+- the string lexer is ugly as hell
+- it's not idiomatic code for a function based state machine
+
 ## Lexer
 
 [![godoc][godoc badge]][godoc]
@@ -12,6 +22,9 @@ Automaton whose states and associated actions are implemented as functions.
 The implementation is similar to the [text template lexer][golex] in the Go
 standard library (but without using channels). Se also Rob Pike's talk about
 [combining states and actions into state functions][pike].
+
+This package can also be used as a toolbox for a more traditional switch-based
+lexer.
 
 See the README in the lexer package for more details.
 

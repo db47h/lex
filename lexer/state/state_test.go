@@ -120,11 +120,13 @@ func Test_QuotedString(t *testing.T) {
 		case '"':
 			return state.QuotedString(tokString)
 		case lexer.EOF:
-			return state.EOF
+			return lexer.StateEOF
 		case ' ', '\n', '\t':
-			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
+			for r = l.Next(); r == ' ' || r == '\n' || r == '\t'; r = l.Next() {
+			}
+			l.Backup()
 		default:
-			l.Emit(tokRawChar, r)
+			l.Emit(l.Pos(), tokRawChar, r)
 		}
 		return nil
 	})
@@ -144,127 +146,14 @@ func Test_QuotedChar(t *testing.T) {
 		case '\'':
 			return state.QuotedChar(tokChar)
 		case lexer.EOF:
-			return state.EOF
+			return lexer.StateEOF
 		case ' ', '\n', '\t':
-			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
-		default:
-			l.Emit(tokRawChar, r)
-		}
-		return nil
-	})
-}
-
-func TestInt(t *testing.T) {
-	var td = []testData{
-		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
-		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:19 Error malformed base 2 immediate value"}},
-		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:19 Error malformed base 16 immediate value"}},
-		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 immediate value"}},
-	}
-	runTests(t, td, func(l *lexer.State) lexer.StateFn {
-		r := l.Next()
-		switch r {
-		case '0':
-			r = l.Next()
-			switch r {
-			case 'x', 'X':
-				l.Next()
-				return state.Int(tokInt, 16)
-			case 'b', 'B':
-				l.Next()
-				return state.Int(tokInt, 2)
-			default:
-				l.Backup() // backup leading 0 just in case it's a single 0.
-				return state.Int(tokInt, 8)
+			for r = l.Next(); r == ' ' || r == '\n' || r == '\t'; r = l.Next() {
 			}
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			return state.Int(tokInt, 10)
-		case lexer.EOF:
-			return state.EOF
-		case ':':
-			l.Emit(tokColon, nil)
-			return nil
-		case ' ', '\n', '\t':
-			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
+			l.Backup()
 		default:
-			l.Emit(tokRawChar, r)
+			l.Emit(l.Pos(), tokRawChar, r)
 		}
 		return nil
 	})
-}
-
-func Test_Number(t *testing.T) {
-	var td = []testData{
-		{`float1`, `1.23`, res{`1:1 FLOAT 1.23`}},
-		{`float2`, `10.e3`, res{`1:1 FLOAT 10000`}},
-		{`float2b`, `10.`, res{`1:1 FLOAT 10`}},
-		{`float3`, `10e-2`, res{`1:1 FLOAT 0.1`}},
-		{`float4`, `a.b`, res{`1:1 RAWCHAR 'a'`, `1:2 RAWCHAR '.'`, `1:3 RAWCHAR 'b'`}},
-		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 RAWCHAR 'b'`}},
-		{`float6`, `13.23e2`, res{`1:1 FLOAT 1323`}},
-		{`float7`, `13.23e+2`, res{`1:1 FLOAT 1323`}},
-		{`float8`, `13.23e-2`, res{`1:1 FLOAT 0.1323`}},
-		{`float9`, `.23e3`, res{`1:1 FLOAT 230`}},
-		{`float10`, `0777:123`, res{`1:1 INT 511`, `1:5 COLON`, `1:6 INT 123`}},
-		{`float11`, `1eB:.e7:1ee`, res{
-			`1:3 Error malformed floating-point constant exponent`, `1:3 RAWCHAR 'B'`, `1:4 COLON`,
-			`1:5 RAWCHAR '.'`, `1:6 RAWCHAR 'e'`, `1:7 INT 7`, `1:8 COLON`,
-			`1:11 Error malformed floating-point constant exponent`,
-			`1:11 RAWCHAR 'e'`}},
-		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 immediate value`, `1:6 COLON`}},
-	}
-	runTests(t, td, func(l *lexer.State) lexer.StateFn {
-		r := l.Next()
-		switch r {
-		case '.':
-			r = l.Peek()
-			if r < '0' || r > '9' {
-				l.Emit(tokRawChar, '.')
-				return nil
-			}
-			fallthrough
-		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			return state.Number(tokInt, tokFloat, '.', true)
-		case ':':
-			l.Emit(tokColon, nil)
-		case lexer.EOF:
-			return state.EOF
-		case ' ', '\n', '\t':
-			l.AcceptWhile(func(r rune) bool { return r == ' ' || r == '\n' || r == '\t' })
-		default:
-			l.Emit(tokRawChar, r)
-		}
-		return nil
-	})
-}
-
-// ExampleNumber shows the result type from Number depending on the input (which
-// should be identical to Go). To summarise, numbers containing a decimal digit,
-// ending with one or with an exponentiation are floats. Everything else is
-// returned as an int.
-//
-func ExampleNumber() {
-	stateNumber := state.Number(0, 1, '.', false)
-	input := "0 0. 1e10 1.2e1"
-	f := token.NewFile("", strings.NewReader(input))
-	l := lexer.New(f, func(l *lexer.State) lexer.StateFn {
-		r := l.Next()
-		switch r {
-		case lexer.EOF:
-			return state.EOF
-		case '.', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			return stateNumber
-		default:
-			return nil // ignore anything else
-		}
-	})
-	for tt, _, v := l.Lex(); tt != token.EOF; tt, _, v = l.Lex() {
-		fmt.Printf("%T %v\n", v, v)
-	}
-
-	// Output:
-	// *big.Int 0
-	// *big.Float 0
-	// *big.Float 1e+10
-	// *big.Float 12
 }

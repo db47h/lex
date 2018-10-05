@@ -24,6 +24,19 @@ const (
 	goRawChar                      // 7 any other single character
 )
 
+var tokNames = map[token.Type]string{
+	token.EOF:    "EOF      ",
+	token.Error:  "error:   ",
+	goSemiColon:  "semicolon",
+	goInt:        "integer  ",
+	goFloat:      "float    ",
+	goString:     "string   ",
+	goChar:       "char     ",
+	goIdentifier: "ident    ",
+	goDot:        "dot      ",
+	goRawChar:    "raw char ",
+}
+
 // tgInit returns the initial state function for our language.
 // We implement it as a closure so that we can initialize state functions from
 // the state package and take advantage of buffer pre-allocation.
@@ -36,53 +49,29 @@ func tgInit() lexer.StateFn {
 	// running in a goroutine.
 	quotedString := state.QuotedString(goString)
 	quotedChar := state.QuotedChar(goChar)
-	bin := state.Int(goInt, 2)
-	hex := state.Int(goInt, 2)
-	number := state.Number(goInt, goFloat, '.', true)
 	ident := identifier()
 
 	return func(l *lexer.State) lexer.StateFn {
 		// get current rune (read for us by the lexer upon entering the initial state)
 		r := l.Next()
+		pos := l.Pos()
 		// THE big switch
 		switch r {
 		case lexer.EOF:
-			// End of file. Must always be handled manually.
-			return state.EOF
+			// End of file
+			return lexer.StateEOF
 		case '\n', ';':
 			// transform EOLs to semi-colons
-			l.Emit(goSemiColon, ';')
+			l.Emit(pos, goSemiColon, ';')
 			return nil
 		case '"':
 			return quotedString
 		case '\'':
 			return quotedChar
-		// numbers are trickier. We have the leading 0 case: what follows
-		// could be a simple 0, an octal int, a float with a leading 0,
-		// or a binary or hexadecimal int with a '0x' or '0b' prefix.
-		case '0':
-			// get the rune following the leading 0.
-			r = l.Next()
-			switch r {
-			case 'x', 'X':
-				// 0x: hexadecimal int.
-				// read the first digit following 'x' before switching to the next state.
-				return hex
-			case 'b', 'B':
-				// 0b: binary int.
-				// read the first digit following 'b' before switching to the next state.
-				return bin
-			default:
-				// At this point, the input could be an octal integer or a float with a leading 0.
-				// Also, l.Current() would return the character following the leading 0, so we un-read
-				// it to that state.Number() can see that leading 0 and properly identify octal integer
-				// literals.
-				l.Backup()
-				return number
-			}
-		// other digits are more straightforward
-		case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		// we use a simple integer-only number lexer
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			// let state.Number decide
+			l.Backup()
 			return number
 		case '.':
 			// we want to distinguish a float starting with a leading dot from a dot used as
@@ -92,20 +81,22 @@ func tgInit() lexer.StateFn {
 				return number
 			}
 			// for a dot followed by any other char, we emit it as-is
-			l.Emit(goDot, nil)
+			l.Emit(pos, goDot, nil)
 		}
 
 		// we're left with identifiers, spaces and raw chars.
 		switch {
 		case unicode.IsSpace(r):
-			// ignore spaces
-			l.AcceptWhile(unicode.IsSpace)
-			return nil // this will discard the current token
+			// eat spaces
+			for r = l.Next(); unicode.IsSpace(r); r = l.Next() {
+			}
+			l.Backup()
+			return nil
 		case unicode.IsLetter(r) || r == '_':
 			// r starts an identifier
 			return ident
 		default:
-			l.Emit(goRawChar, r)
+			l.Emit(pos, goRawChar, r)
 			return nil
 		}
 	}
@@ -116,6 +107,7 @@ func identifier() lexer.StateFn {
 	// least as large as the largest identifier scanned.
 	b := make([]rune, 0, 64)
 	return func(l *lexer.State) lexer.StateFn {
+		pos := l.Pos()
 		// reset buffer and add first char
 		b = append(b[:0], l.Current())
 		// read identifier
@@ -124,16 +116,28 @@ func identifier() lexer.StateFn {
 		}
 		// the character returned by the last call to next is not part of the identifier. Undo it.
 		l.Backup()
-		l.Emit(goIdentifier, string(b))
+		l.Emit(pos, goIdentifier, string(b))
 		return nil
 	}
+}
+
+// number lexes a base 10 int64.
+func number(s *lexer.State) lexer.StateFn {
+	var n int64
+	r := s.Next()
+	p := s.Pos()
+	for ; r >= '0' && r <= '9'; r = s.Next() {
+		n = n*10 + int64(r-'0')
+	}
+	s.Emit(p, goInt, n)
+	return nil
 }
 
 // TinyGo: a lexer for a minimal Go-like language.
 //
 func Example_go() {
 	input := `var str = "some\tstring"
-	var flt = -1.275`
+	var intg = -1`
 
 	// initialize lexer.
 	//
@@ -145,25 +149,25 @@ func Example_go() {
 		// print the token type and value.
 		switch v := v.(type) {
 		case nil:
-			fmt.Println(tt)
+			fmt.Println(tokNames[tt])
 		case string:
-			fmt.Println(tt, strconv.Quote(v))
+			fmt.Println(tokNames[tt], strconv.Quote(v))
 		case rune:
-			fmt.Println(tt, strconv.QuoteRune(v))
+			fmt.Println(tokNames[tt], strconv.QuoteRune(v))
 		default:
-			fmt.Println(tt, v)
+			fmt.Println(tokNames[tt], v)
 		}
 	}
 
 	// Output:
-	// Type(5) "var"
-	// Type(5) "str"
-	// Type(7) '='
-	// Type(3) "some\tstring"
-	// Type(0) ';'
-	// Type(5) "var"
-	// Type(5) "flt"
-	// Type(7) '='
-	// Type(7) '-'
-	// Type(2) 1.275
+	// ident     "var"
+	// ident     "str"
+	// raw char  '='
+	// string    "some\tstring"
+	// semicolon ';'
+	// ident     "var"
+	// ident     "intg"
+	// raw char  '='
+	// raw char  '-'
+	// integer   1
 }

@@ -2,18 +2,24 @@
 
 ## Overview
 
-Package state provides state functions for lexing quoted strings,
-quoted characters and numbers (integers in any base as well as floats) and
-graceful handling of EOF.
+Package state provides state functions for lexing quoted strings and quoted
+characters.
 
-According to the convention on Lexer.StateFn, all state functions expect that
-the first character that is part of the lexed entity has already been read by
-Lexer.Next and will be retrieved by the state function via Lexer.Current.
+State functions in this package expect that the first character that is
+part of the lexed entity has already been read by Lexer.Next. For example:
+
+
+	r := l.Next()
+	switch r {
+	case '"':
+		// do not call l.Backup() here
+		return state.QuotedString(tokString)
+	}
 
 All functions (with the exception of EOF) are in fact constructors that
 take a at least a token type as argument and return closures. Note that
 because some of these constructors pre-allocate buffers, using the returned
-state functions concurently is not safe. See the examples for correct usage.
+state functions concurrently is not safe. See the examples for correct usage.
 
 ## Installation
 
