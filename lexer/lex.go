@@ -98,13 +98,14 @@ type state struct {
 	undo   [undoSZ]undo  // undo buffer
 	queue                // Item queue
 	f      *token.File
-	line   int     // line count
-	state  StateFn // current state
-	init   StateFn // current initial-state function.
-	offs   int     // offset of first byte in buffer
-	r, w   int     // read/write indices
-	ur, uh int     // undo buffer read pos and head
-	ioErr  error   // if not nil, IO error @w
+	line   int       // line count
+	state  StateFn   // current state
+	init   StateFn   // current initial-state function.
+	offs   int       // offset of first byte in buffer
+	r, w   int       // read/write indices
+	ur, uh int       // undo buffer read pos and head
+	ts     token.Pos // token start position
+	ioErr  error     // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
@@ -317,4 +318,18 @@ func (s *State) Peek() rune {
 	r := s.Next()
 	s.Backup()
 	return r
+}
+
+// StartToken sets p as a token start position. This is a utility function that
+// when used in conjunction with TokenPos enables tracking of a token start
+// position across a StateFn chain.
+//
+func (s *State) StartToken(p token.Pos) {
+	s.ts = p
+}
+
+// TokenPos returns the position set by StartToken.
+//
+func (s *State) TokenPos() token.Pos {
+	return s.ts
 }

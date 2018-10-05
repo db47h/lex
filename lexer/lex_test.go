@@ -165,7 +165,6 @@ func TestLexer_Lex(t *testing.T) {
 		num = 0
 		base = 10
 		r := s.Current()
-		p := s.Pos()
 		if r == '0' {
 			r = s.Next()
 			if r == 'x' || r == 'X' {
@@ -177,7 +176,7 @@ func TestLexer_Lex(t *testing.T) {
 		}
 		for r := s.Current(); scanDigit(r); r = s.Next() {
 		}
-		s.Emit(p, 0, int(num))
+		s.Emit(s.TokenPos(), 0, int(num))
 		if base == 8 {
 			s.Errorf(s.Pos(), "test queue")
 			s.Errorf(s.Pos(), "twice")
@@ -202,6 +201,7 @@ func TestLexer_Lex(t *testing.T) {
 	l := lexer.New(f,
 		func(s *lexer.State) lexer.StateFn {
 			r := s.Next()
+			s.StartToken(s.Pos())
 			switch r {
 			case lexer.EOF:
 				return lexer.StateEOF
