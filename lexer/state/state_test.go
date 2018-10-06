@@ -157,3 +157,55 @@ func Test_QuotedChar(t *testing.T) {
 		return nil
 	})
 }
+
+func Test_Number(t *testing.T) {
+	var td = []testData{
+		{"int10", ":12 0 4", res{"1:1 COLON", "1:2 INT 12", "1:5 INT 0", "1:7 INT 4"}},
+		{"int2", "0b011 0b111 0b0 0b", res{"1:1 INT 3", "1:7 INT 7", "1:13 INT 0", "1:19 Error malformed base 2 literal"}},
+		{"int16", "0x0f0 0x101 0x2 0x", res{"1:1 INT 240", "1:7 INT 257", "1:13 INT 2", "1:19 Error malformed base 16 literal"}},
+		{"int8", "017 07 0 08", res{"1:1 INT 15", "1:5 INT 7", "1:8 INT 0", "1:11 Error invalid character U+0038 '8' in base 8 literal"}},
+		{`float1`, `.23 1.23`, res{"1:1 FLOAT 0.23", "1:5 FLOAT 1.23"}},
+		{`float2`, `10e3`, res{`1:1 FLOAT 10000`}},
+		{`float2b`, `10.e1`, res{`1:1 FLOAT 100`}},
+		{`float3`, `10e-2`, res{`1:1 FLOAT 0.1`}},
+		{`float4`, `a.b`, res{`1:1 RAWCHAR 'a'`, `1:2 RAWCHAR '.'`, `1:3 RAWCHAR 'b'`}},
+		{`float5`, `.b`, res{`1:1 RAWCHAR '.'`, `1:2 RAWCHAR 'b'`}},
+		{`float6`, `13.23e2`, res{`1:1 FLOAT 1323`}},
+		{`float7`, `13.23e+2`, res{`1:1 FLOAT 1323`}},
+		{`float8`, `13.23e-2`, res{`1:1 FLOAT 0.1323`}},
+		{`float9`, `.23e3`, res{`1:1 FLOAT 230`}},
+		{`float10`, `0777:123`, res{`1:1 INT 511`, `1:5 COLON`, `1:6 INT 123`}},
+		{`float11`, `1eB:.e7:1ee`, res{
+			`1:3 Error malformed floating-point literal exponent`, `1:3 RAWCHAR 'B'`, `1:4 COLON`,
+			`1:5 RAWCHAR '.'`, `1:6 RAWCHAR 'e'`, `1:7 INT 7`, `1:8 COLON`,
+			`1:11 Error malformed floating-point literal exponent`,
+			`1:11 RAWCHAR 'e'`}},
+		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 literal`, `1:6 COLON`}},
+	}
+	runTests(t, td, func(s *lexer.State) lexer.StateFn {
+		r := s.Next()
+		s.StartToken(s.Pos())
+		switch r {
+		case lexer.EOF:
+			return lexer.StateEOF
+		case ':':
+			s.Emit(s.TokenPos(), tokColon, nil)
+		case '.':
+			r = s.Peek()
+			if r < '0' || r > '9' {
+				s.Emit(s.TokenPos(), tokRawChar, '.')
+				return nil
+			}
+			fallthrough
+		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+			return state.Number(tokInt, tokFloat, '.')
+		case ' ', '\n', '\t':
+			for r = s.Next(); r == ' ' || r == '\n' || r == '\t'; r = s.Next() {
+			}
+			s.Backup()
+		default:
+			s.Emit(s.TokenPos(), tokRawChar, r)
+		}
+		return nil
+	})
+}

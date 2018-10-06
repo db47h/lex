@@ -17,8 +17,8 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-// Package state provides state functions for lexing quoted strings and quoted
-// characters.
+// Package state provides state functions for lexing numbers, quoted strings and
+// quoted characters.
 //
 // State functions in this package expect that the first character that is
 // part of the lexed entity has already been read by Lexer.Next. For example:
