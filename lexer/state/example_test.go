@@ -50,6 +50,7 @@ func tgInit() lexer.StateFn {
 	quotedString := state.QuotedString(goString)
 	quotedChar := state.QuotedChar(goChar)
 	ident := identifier()
+	number := state.Number(goInt, goFloat, '.')
 
 	return func(l *lexer.State) lexer.StateFn {
 		// get current rune (read for us by the lexer upon entering the initial state)
@@ -68,10 +69,7 @@ func tgInit() lexer.StateFn {
 			return quotedString
 		case '\'':
 			return quotedChar
-		// we use a simple integer-only number lexer
 		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-			// let state.Number decide
-			l.Backup()
 			return number
 		case '.':
 			// we want to distinguish a float starting with a leading dot from a dot used as
@@ -121,23 +119,11 @@ func identifier() lexer.StateFn {
 	}
 }
 
-// number lexes a base 10 int64.
-func number(s *lexer.State) lexer.StateFn {
-	var n int64
-	r := s.Next()
-	p := s.Pos()
-	for ; r >= '0' && r <= '9'; r = s.Next() {
-		n = n*10 + int64(r-'0')
-	}
-	s.Emit(p, goInt, n)
-	return nil
-}
-
 // TinyGo: a lexer for a minimal Go-like language.
 //
 func Example_go() {
 	input := `var str = "some\tstring"
-	var intg = -1`
+	var flt = -.42`
 
 	// initialize lexer.
 	//
@@ -166,8 +152,8 @@ func Example_go() {
 	// string    "some\tstring"
 	// semicolon ';'
 	// ident     "var"
-	// ident     "intg"
+	// ident     "flt"
 	// raw char  '='
 	// raw char  '-'
-	// integer   1
+	// float     0.42
 }
