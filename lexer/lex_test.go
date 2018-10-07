@@ -75,7 +75,7 @@ func TestLexer_Next(t *testing.T) {
 			{"eof1", next, 2, lexer.EOF},
 			{"eofb", backup, 1, 'b'},
 			{"eof2", next, 2, lexer.EOF},
-			{"eof3", next, 2, lexer.EOF},
+			{"eofp1", peek, 2, lexer.EOF},
 			{"eof4", next, 2, lexer.EOF},
 			{"eofb2", backup, 1, 'b'},
 			{"eofp2", peek, 1, lexer.EOF},

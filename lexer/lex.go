@@ -280,7 +280,7 @@ func (s *State) Current() rune {
 	return s.undo[s.ur].r
 }
 
-// Pos returns the position (rune offset) of the last rune returned by Sate.Next.
+// Pos returns the byte offset of the last rune returned by State.Next.
 // Returns -1 if no input has been read yet.
 //
 func (s *State) Pos() token.Pos {
@@ -312,9 +312,13 @@ func (s *State) fill() {
 }
 
 // Peek returns the next rune in the input stream without consuming it. This
-// is equivalent to calling Next followed by Backup.
+// is equivalent to calling Next followed by Backup. At EOF, it simply returns
+// EOF.
 //
 func (s *State) Peek() rune {
+	if s.Current() == EOF {
+		return EOF
+	}
 	r := s.Next()
 	s.Backup()
 	return r
