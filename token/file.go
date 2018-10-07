@@ -18,7 +18,7 @@ func (p Position) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Filename, p.Line, p.Column)
 }
 
-// A File represents an input file. It's a wrapper around an io.RuneReader that
+// A File represents an input file. It's a wrapper around an io.Reader that
 // handles file offset to line/column conversion.
 //
 type File struct {
@@ -46,22 +46,20 @@ func (f *File) Name() string {
 //
 // line is the 1-based line index.
 //
-// The current implementation will only accept a new line if line == last line + 1
-// and pos greater than the position of the previous line.
+// If pos represents a position before the position of the last known line,
+// or if line is not equal to the last know line number plus one, AddLine will
+// panic.
 //
 func (f *File) AddLine(pos Pos, line int) {
 	l := len(f.lines)
-	if l > 0 && f.lines[l-1] >= pos {
-		// line already known
-		return
-	}
-	if l+1 != line {
+	if (l > 0 && f.lines[l-1] >= pos) || l+1 != line {
 		panic("invalid line number")
 	}
 	f.lines = append(f.lines, pos)
 }
 
-// Position returns the 1-based line and column for a given pos.
+// Position returns the 1-based line and column for a given pos. The returned
+// column is a byte offset, not a rune offset.
 //
 func (f *File) Position(pos Pos) Position {
 	i, j := 0, len(f.lines)
