@@ -1,25 +1,25 @@
 package lexer
 
 import (
-	"bytes"
 	"math/rand"
 	"testing"
 
 	"github.com/db47h/parsekit/token"
 )
 
-var buf = make([]byte, 50<<20) // 50MiB
+type mockReader struct{}
 
-func init() {
-	rand.Seed(123456)
-	for i := range buf {
-		buf[i] = byte('a' + rand.Intn(26))
+func (mockReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'a'
 	}
+	return len(p), nil
 }
 
 func BenchmarkLexer(b *testing.B) {
-	l := New(token.NewFile("", bytes.NewReader(buf)), nil)
+	l := New(token.NewFile("", mockReader{}), nil)
 	s := (*State)(l)
+
 	rand.Seed(123456)
 
 	b.ResetTimer()
