@@ -1,4 +1,4 @@
-// Copyright 2017 Denis Bernard <db047h@gmail.com>
+// Copyright 2017-2018 Denis Bernard <db047h@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
