@@ -28,8 +28,9 @@ import (
 )
 
 const (
-	undoSZ   = 8
-	undoMask = undoSZ - 1
+	// BackupBufferSize is the size of the undo buffer.
+	BackupBufferSize = 16
+	undoMask         = BackupBufferSize - 1
 )
 
 // queue is a FIFO queue.
@@ -94,9 +95,9 @@ type undo struct {
 }
 
 type state struct {
-	buf    [4 << 10]byte // byte buffer
-	undo   [undoSZ]undo  // undo buffer
-	queue                // Item queue
+	buf    [4 << 10]byte          // byte buffer
+	undo   [BackupBufferSize]undo // undo buffer
+	queue                         // Item queue
 	f      *token.File
 	line   int       // line count
 	state  StateFn   // current state
@@ -193,8 +194,14 @@ func (s *State) Errorf(p token.Pos, format string, args ...interface{}) {
 	s.push(token.Error, p, fmt.Sprintf(format, args...))
 }
 
-// Next returns the next rune in the input stream. IF the end of the stream
-// has ben reached or an IO error occurred, it will return EOF.
+// Next returns the next rune in the input stream. If the end of the input
+// has ben reached it will return EOF. If an I/O error occurs other than io.EOF,
+// it will report the I/O error by calling Errorf then return EOF.
+//
+// Next only returns valid runes or -1 to indicate EOF. It filters out invalid
+// runes, nul bytes (0x00) and BOMs (U+FEFF) and reports them as errors by
+// calling Errorf (except for a BOM at the beginning of the file which is simply
+// ignored).
 //
 func (s *State) Next() rune {
 	// read from undo buffer
@@ -232,7 +239,7 @@ again:
 			s.pushUndo(pos, EOF)
 		}
 		if s.ioErr != io.EOF {
-			s.Errorf(s.Pos(), "I/O error: "+s.ioErr.Error())
+			s.Errorf(pos, "I/O error: "+s.ioErr.Error())
 		}
 		return EOF
 	}
@@ -265,7 +272,12 @@ func (s *State) pushUndo(p token.Pos, r rune) {
 	s.undo[s.uh] = undo{-1, utf8.RuneSelf}
 }
 
-// Backup reverts the last call to Next.
+// Backup reverts the last call to Next. Backup can be called at most
+// (BackupBufferSize-1) times in a row (i.e. with no calls to Next in between).
+// Calling Backup beyond the start of the undo buffer or at the beginning
+// of the input stream will fail silently, Pos will return -1 (an invalid
+// position) and Current will return utf8.RuneSelf, a value impossible to get
+// by any other means.
 //
 func (s *State) Backup() {
 	if s.undo[s.ur].p == -1 {
@@ -326,7 +338,34 @@ func (s *State) Peek() rune {
 
 // StartToken sets p as a token start position. This is a utility function that
 // when used in conjunction with TokenPos enables tracking of a token start
-// position across a StateFn chain.
+// position across a StateFn chain without having to manually keep track of it
+// via closures or function parameters.
+//
+// This is typically called at the start of the initial state function, just
+// after an initial call to next:
+//
+//	func stateInit(s *lexer.State) lexer.StateFn {
+//		r := s.Next()
+//		s.StartToken(s.Pos())
+//		switch {
+//		case r >= 'a' && r <= 'z':
+//			return stateIdentifier
+//		default:
+//			// ...
+//		}
+//		return nil
+//	}
+//
+//	func stateIdentifier(s *lexer.State) lexer.StateFn {
+//		tokBuf := make([]rune, 0, 64)
+//		for r := s.Current(); r >= 'a' && r <= 'z'; r = s.Next() {
+//			tokBuf = append(tokBuf, r)
+//		}
+//		s.Backup()
+//		// TokenPos gives us the token start position set in stateInit
+//		s.Emit(s.TokenPos(), tokTypeIdentifier, string(tokBuf))
+//		return nil
+//	}
 //
 func (s *State) StartToken(p token.Pos) {
 	s.ts = p
