@@ -1,5 +1,8 @@
 {{ with .PDoc -}}
+
 # {{ .Name }}
+
+[![GoDoc](https://godoc.org/{{ .ImportPath }}?status.svg)](https://godoc.org/{{ .ImportPath }})
 
 ## Overview
 
@@ -11,7 +14,7 @@
 go get -u {{ .ImportPath }}
 ```
 
-Then just import the package in your cusrom lexer:
+Then just import the package in your custom lexer:
 
 ```go
 import "{{ .ImportPath }}"

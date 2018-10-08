@@ -1,5 +1,7 @@
 # state
 
+[![GoDoc](https://godoc.org/github.com/db47h/lex/state?status.svg)](https://godoc.org/github.com/db47h/lex/state)
+
 ## Overview
 
 Package state provides state functions for lexing numbers, quoted strings and
@@ -27,7 +29,7 @@ state functions concurrently is not safe. See the examples for correct usage.
 go get -u github.com/db47h/lex/state
 ```
 
-Then just import the package in your cusrom lexer:
+Then just import the package in your custom lexer:
 
 ```go
 import "github.com/db47h/lex/state"

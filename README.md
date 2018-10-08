@@ -1,5 +1,7 @@
 # lex
 
+[![GoDoc](https://godoc.org/github.com/db47h/lex?status.svg)](https://godoc.org/github.com/db47h/lex)
+
 ## Overview
 
 Package lex provides the core of a lexer built as a Deterministic Finite State
@@ -105,7 +107,7 @@ to custom state functions in client code.
 go get -u github.com/db47h/lex
 ```
 
-Then just import the package in your cusrom lexer:
+Then just import the package in your custom lexer:
 
 ```go
 import "github.com/db47h/lex"
