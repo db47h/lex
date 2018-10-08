@@ -22,8 +22,7 @@ package state
 import (
 	"math/big"
 
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
 )
 
 const (
@@ -36,15 +35,15 @@ const (
 // A numberLexer lexes numbers.
 //
 type numberLexer struct {
-	tokInt     token.Type // token type for integers
-	tokFloat   token.Type // token type for floats
+	tokInt     lex.Token // token type for integers
+	tokFloat   lex.Token // token type for floats
 	buf        []byte
 	base       int
 	decimalSep rune // decimal separator
 
 }
 
-// Number returns a lexer.StateFn that lexes numbers.
+// Number returns a lex.StateFn that lexes numbers.
 //
 // For integers, the number base is determined by the number prefix. A prefix of
 // “0x” or “0X” selects base 16; a “0b” or “0B”  prefix selects base 2 and the
@@ -65,7 +64,8 @@ type numberLexer struct {
 //
 //	switch s.Next() {
 //	case EOF:
-//		return lexer.StateEOF
+//		s.Emit(s.Pos(), tokEOF, nil)
+//		return nil
 //	case decimalSeparator:
 //		if r := s.Peek(); r >= 0 && r <= 0 {
 //			return state.Number(tokInt, tokFloat, decimalSeparator)
@@ -81,7 +81,7 @@ type numberLexer struct {
 // paradigm. As a result it is not the fastest by a long stretch. On the other
 // hand it is a good example for the lexer package.
 //
-func Number(tokInt, tokFloat token.Type, decimalSep rune) lexer.StateFn {
+func Number(tokInt, tokFloat lex.Token, decimalSep rune) lex.StateFn {
 	l := &numberLexer{
 		tokInt:     tokInt,
 		tokFloat:   tokFloat,
@@ -94,7 +94,7 @@ func Number(tokInt, tokFloat token.Type, decimalSep rune) lexer.StateFn {
 
 // stateNumber is the main entry point for numbers.
 //
-func (l *numberLexer) stateNumber(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateNumber(s *lex.State) lex.StateFn {
 	r := s.Current()
 	switch r {
 	case '0':
@@ -119,7 +119,7 @@ func (l *numberLexer) stateNumber(s *lexer.State) lexer.StateFn {
 // integer returns a StateFn that lexes integers in the given base.
 // Base must be between >= 2 and <= 36, no prefixes allowed.
 //
-func (l *numberLexer) stateInteger(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateInteger(s *lex.State) lex.StateFn {
 	l.buf = l.buf[:0]
 	l.scanDigits(s, l.base)
 	// for bases < 10, consider digits >= base following the constant to be an error
@@ -136,10 +136,10 @@ func (l *numberLexer) stateInteger(s *lexer.State) lexer.StateFn {
 
 // base 8 integer, base 10 integer, base 10 integer with exponent, or float.
 // i.e. anything of the form [0-9]*\.[0-9]*
-func (l *numberLexer) stateIntegerOrFloat(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateIntegerOrFloat(s *lex.State) lex.StateFn {
 	var (
-		r8 rune      // keep track of end-of base 8 literal
-		p8 token.Pos = -1
+		r8 rune    // keep track of end-of base 8 literal
+		p8 lex.Pos = -1
 	)
 	l.buf = l.buf[:0]
 	if s.Current() == '0' {
@@ -171,7 +171,7 @@ func (l *numberLexer) stateIntegerOrFloat(s *lexer.State) lexer.StateFn {
 	return l.stateEmitInt
 }
 
-func (l *numberLexer) stateEmitInt(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateEmitInt(s *lex.State) lex.StateFn {
 	switch {
 	case len(l.buf) == 0:
 		s.Errorf(s.Pos(), errMalformedInt, l.base)
@@ -186,7 +186,7 @@ func (l *numberLexer) stateEmitInt(s *lexer.State) lexer.StateFn {
 	return nil
 }
 
-func (l *numberLexer) stateFractional(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateFractional(s *lex.State) lex.StateFn {
 	l.buf = append(l.buf, '.')
 	s.Next()
 	l.scanDigits(s, 10)
@@ -201,7 +201,7 @@ func (l *numberLexer) stateFractional(s *lexer.State) lexer.StateFn {
 	return l.stateEmitFloat
 }
 
-func (l *numberLexer) stateEmitFloat(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateEmitFloat(s *lex.State) lex.StateFn {
 	z, ok := new(big.Float).SetString(string(l.buf))
 	if !ok {
 		panic("Float.SetString failed")
@@ -211,7 +211,7 @@ func (l *numberLexer) stateEmitFloat(s *lexer.State) lexer.StateFn {
 	return nil
 }
 
-func (l *numberLexer) stateExponent(s *lexer.State) lexer.StateFn {
+func (l *numberLexer) stateExponent(s *lex.State) lex.StateFn {
 	l.buf = append(l.buf, 'e')
 	if r := s.Next(); r == '-' || r == '+' {
 		l.buf = append(l.buf, byte(r))
@@ -228,7 +228,7 @@ func (l *numberLexer) stateExponent(s *lexer.State) lexer.StateFn {
 	return nil
 }
 
-func (l *numberLexer) scanDigits(s *lexer.State, base int) {
+func (l *numberLexer) scanDigits(s *lex.State, base int) {
 	r := s.Current()
 	for {
 		var rl rune

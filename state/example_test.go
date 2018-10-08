@@ -6,27 +6,27 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/lexer/state"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
+	"github.com/db47h/lex/state"
 )
 
 // Token types.
 //
 const (
-	goSemiColon  token.Type = iota // 0 semi-colon, EOL
-	goInt                          // 1 integer literal
-	goFloat                        // 2 float literal
-	goString                       // 3 quoted string
-	goChar                         // 4 quoted char
-	goIdentifier                   // 5 identifier
-	goDot                          // 6 '.' field/method selector
-	goRawChar                      // 7 any other single character
+	goEOF        lex.Token = iota // 0 EOF
+	goSemiColon                   // 1 semi-colon, EOL
+	goInt                         // 2 integer literal
+	goFloat                       // 3 float literal
+	goString                      // 4 quoted string
+	goChar                        // 5 quoted char
+	goIdentifier                  // 6 identifier
+	goDot                         // 7 '.' field/method selector
+	goRawChar                     // 8 any other single character
 )
 
-var tokNames = map[token.Type]string{
-	token.EOF:    "EOF      ",
-	token.Error:  "error:   ",
+var tokNames = map[lex.Token]string{
+	lex.Error:    "error:   ",
+	goEOF:        "EOF      ",
 	goSemiColon:  "semicolon",
 	goInt:        "integer  ",
 	goFloat:      "float    ",
@@ -41,7 +41,7 @@ var tokNames = map[token.Type]string{
 // We implement it as a closure so that we can initialize state functions from
 // the state package and take advantage of buffer pre-allocation.
 //
-func tgInit() lexer.StateFn {
+func tgInit() lex.StateFn {
 	// Note that because of the buffer pre-allocation mentioned above, reusing
 	// any of these variables in multiple goroutines is not safe. i.e. do not
 	// turn these into global variables.
@@ -52,18 +52,19 @@ func tgInit() lexer.StateFn {
 	ident := identifier()
 	number := state.Number(goInt, goFloat, '.')
 
-	return func(l *lexer.State) lexer.StateFn {
+	return func(s *lex.State) lex.StateFn {
 		// get current rune (read for us by the lexer upon entering the initial state)
-		r := l.Next()
-		pos := l.Pos()
+		r := s.Next()
+		pos := s.Pos()
 		// THE big switch
 		switch r {
-		case lexer.EOF:
+		case lex.EOF:
 			// End of file
-			return lexer.StateEOF
+			s.Emit(pos, goEOF, nil)
+			return nil
 		case '\n', ';':
 			// transform EOLs to semi-colons
-			l.Emit(pos, goSemiColon, ';')
+			s.Emit(pos, goSemiColon, ';')
 			return nil
 		case '"':
 			return quotedString
@@ -74,37 +75,38 @@ func tgInit() lexer.StateFn {
 		case '.':
 			// we want to distinguish a float starting with a leading dot from a dot used as
 			// a field/method selector between two identifiers.
-			if r = l.Peek(); r >= '0' && r <= '9' {
+			if r = s.Peek(); r >= '0' && r <= '9' {
 				// dot followed by a digit => floating point number
 				return number
 			}
-			// for a dot followed by any other char, we emit it as-is
-			l.Emit(pos, goDot, nil)
+			// for a dot followed by any other interesting char, we emit it as-is
+			s.Emit(pos, goDot, nil)
+			return nil
 		}
 
 		// we're left with identifiers, spaces and raw chars.
 		switch {
 		case unicode.IsSpace(r):
 			// eat spaces
-			for r = l.Next(); unicode.IsSpace(r); r = l.Next() {
+			for r = s.Next(); unicode.IsSpace(r); r = s.Next() {
 			}
-			l.Backup()
+			s.Backup()
 			return nil
 		case unicode.IsLetter(r) || r == '_':
 			// r starts an identifier
 			return ident
 		default:
-			l.Emit(pos, goRawChar, r)
+			s.Emit(pos, goRawChar, r)
 			return nil
 		}
 	}
 }
 
-func identifier() lexer.StateFn {
+func identifier() lex.StateFn {
 	// preallocate a buffer to store the identifier. It will end-up being at
 	// least as large as the largest identifier scanned.
 	b := make([]rune, 0, 64)
-	return func(l *lexer.State) lexer.StateFn {
+	return func(l *lex.State) lex.StateFn {
 		pos := l.Pos()
 		// reset buffer and add first char
 		b = append(b[:0], l.Current())
@@ -125,13 +127,13 @@ func Example_go() {
 	input := `var str = "some\tstring"
 	var flt = -.42`
 
-	// initialize lexer.
+	// initialize lex.
 	//
-	inputFile := token.NewFile("example", strings.NewReader(input))
-	l := lexer.New(inputFile, tgInit())
+	inputFile := lex.NewFile("example", strings.NewReader(input))
+	l := lex.NewLexer(inputFile, tgInit())
 
 	// loop over each token
-	for tt, _, v := l.Lex(); tt != token.EOF; tt, _, v = l.Lex() {
+	for tt, _, v := l.Lex(); tt != goEOF; tt, _, v = l.Lex() {
 		// print the token type and value.
 		switch v := v.(type) {
 		case nil:

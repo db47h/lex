@@ -1,10 +1,8 @@
-package lexer
+package lex
 
 import (
 	"math/rand"
 	"testing"
-
-	"github.com/db47h/parsekit/token"
 )
 
 type mockReader struct{}
@@ -17,7 +15,7 @@ func (mockReader) Read(p []byte) (int, error) {
 }
 
 func BenchmarkLexer(b *testing.B) {
-	l := New(token.NewFile("", mockReader{}), nil)
+	l := NewLexer(NewFile("", mockReader{}), nil)
 	s := (*State)(l)
 
 	rand.Seed(123456)

@@ -2,17 +2,17 @@
 
 ## Overview
 
-Package state provides state functions for lexing quoted strings and quoted
-characters.
+Package state provides state functions for lexing numbers, quoted strings and
+quoted characters.
 
 State functions in this package expect that the first character that is
-part of the lexed entity has already been read by Lexer.Next. For example:
+part of the lexed entity has already been read by lex.Next. For example:
 
 
-	r := l.Next()
+	r := s.Next()
 	switch r {
 	case '"':
-		// do not call l.Backup() here
+		// do not call s.Backup() here
 		return state.QuotedString(tokString)
 	}
 
@@ -24,20 +24,20 @@ state functions concurrently is not safe. See the examples for correct usage.
 ## Installation
 
 ```bash
-go get -u github.com/db47h/parsekit/lexer/state
+go get -u github.com/db47h/lex/state
 ```
 
 Then just import the package in your cusrom lexer:
 
 ```go
-import "github.com/db47h/parsekit/lexer/state"
+import "github.com/db47h/lex/state"
 ```
 
 ## License
 
 Package state is released under the terms of the MIT license:
 
-> Copyright 2017 Denis Bernard <db047h@gmail.com>
+> Copyright 2017-2018 Denis Bernard <db047h@gmail.com>
 >
 > Permission is hereby granted, free of charge, to any person obtaining a copy of
 > this software and associated documentation files (the "Software"), to deal in

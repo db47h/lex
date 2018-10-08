@@ -1,4 +1,4 @@
-package lexer_test
+package lex_test
 
 import (
 	"fmt"
@@ -8,8 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
 )
 
 type testData struct {
@@ -21,15 +20,16 @@ type testData struct {
 type res []string
 
 const (
-	tokSpace token.Type = iota
+	tokEOF lex.Token = iota
+	tokSpace
 	tokChar
 )
 
-func tString(t token.Type, p token.Pos, v interface{}) string {
+func tString(t lex.Token, p lex.Pos, v interface{}) string {
 	switch t {
-	case token.EOF:
+	case tokEOF:
 		return "EOF"
-	case token.Error:
+	case lex.Error:
 		return "error: " + v.(string)
 	case tokSpace:
 		return "SPACE"
@@ -44,22 +44,21 @@ func tString(t token.Type, p token.Pos, v interface{}) string {
 
 // Test proper behavior of Next/Peek/Backup
 func TestLexer_Next(t *testing.T) {
-	next := func(s *lexer.State) rune { return s.Next() }
-	peek := func(s *lexer.State) rune { return s.Peek() }
-	backup := func(s *lexer.State) rune { s.Backup(); return s.Current() }
-	cur := func(s *lexer.State) rune { return s.Current() }
+	next := func(s *lex.State) rune { return s.Next() }
+	peek := func(s *lex.State) rune { return s.Peek() }
+	backup := func(s *lex.State) rune { s.Backup(); return s.Current() }
+	cur := func(s *lex.State) rune { return s.Current() }
 
 	input := []string{
 		"ab",
 		"c",
 		"\n\n",
-		"abcdefghi",
 	}
 
 	data := [][]struct {
 		name string
-		fn   func(l *lexer.State) rune
-		p    token.Pos
+		fn   func(l *lex.State) rune
+		p    lex.Pos
 		r    rune
 	}{
 		{
@@ -69,16 +68,16 @@ func TestLexer_Next(t *testing.T) {
 			{"bb", backup, 0, 'a'},
 			{"bp1", peek, 0, 'b'},
 			{"bn2", next, 1, 'b'},
-			{"bn3", next, 2, lexer.EOF},
+			{"bn3", next, 2, lex.EOF},
 			{"bb1", backup, 1, 'b'},
-			{"bp2", peek, 1, lexer.EOF},
-			{"eof1", next, 2, lexer.EOF},
+			{"bp2", peek, 1, lex.EOF},
+			{"eof1", next, 2, lex.EOF},
 			{"eofb", backup, 1, 'b'},
-			{"eof2", next, 2, lexer.EOF},
-			{"eofp1", peek, 2, lexer.EOF},
-			{"eof4", next, 2, lexer.EOF},
+			{"eof2", next, 2, lex.EOF},
+			{"eofp1", peek, 2, lex.EOF},
+			{"eof4", next, 2, lex.EOF},
 			{"eofb2", backup, 1, 'b'},
-			{"eofp2", peek, 1, lexer.EOF},
+			{"eofp2", peek, 1, lex.EOF},
 		},
 		{
 			{"cb0", cur, -1, utf8.RuneSelf},
@@ -87,10 +86,10 @@ func TestLexer_Next(t *testing.T) {
 			{"cn1", next, 0, 'c'},
 			{"cb2", backup, -1, utf8.RuneSelf},
 			{"cn2", next, 0, 'c'},
-			{"cn3", next, 1, lexer.EOF},
-			{"eof0", next, 1, lexer.EOF},
-			{"eof1", next, 1, lexer.EOF},
-			{"eof2", next, 1, lexer.EOF},
+			{"cn3", next, 1, lex.EOF},
+			{"eof0", next, 1, lex.EOF},
+			{"eof1", next, 1, lex.EOF},
+			{"eof2", next, 1, lex.EOF},
 			{"eofb", backup, 0, 'c'},
 			{"eofb", backup, -1, utf8.RuneSelf},
 			{"cn4", next, 0, 'c'},
@@ -100,31 +99,11 @@ func TestLexer_Next(t *testing.T) {
 			{"nl1", next, 0, '\n'},
 			{"nl2", peek, 0, '\n'},
 		},
-		{
-			{"ob", cur, -1, utf8.RuneSelf},
-			{"on0", next, 0, 'a'},
-			{"on1", next, 1, 'b'},
-			{"on2", next, 2, 'c'},
-			{"on3", next, 3, 'd'},
-			{"on4", next, 4, 'e'},
-			{"on5", next, 5, 'f'},
-			{"on6", next, 6, 'g'},
-			{"on7", next, 7, 'h'},
-			{"on8", next, 8, 'i'},
-			{"on9", next, 9, lexer.EOF},
-			{"ob0", backup, 8, 'i'},
-			{"ob1", backup, 7, 'h'},
-			{"ob2", backup, 6, 'g'},
-			{"ob3", backup, 5, 'f'},
-			{"ob4", backup, 4, 'e'},
-			{"ob5", backup, 3, 'd'},
-			{"ob6", backup, -1, utf8.RuneSelf},
-		},
 	}
 
 	for i, in := range input {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			lexer.New(token.NewFile("", strings.NewReader(in)), func(s *lexer.State) lexer.StateFn {
+			lex.NewLexer(lex.NewFile("", strings.NewReader(in)), func(s *lex.State) lex.StateFn {
 				for _, td := range data[i] {
 					r := td.fn(s)
 					if r != td.r {
@@ -133,7 +112,7 @@ func TestLexer_Next(t *testing.T) {
 					if s.Pos() != td.p {
 						t.Errorf("%s: expected pos %d, got %d", td.name, td.p, s.Pos())
 					}
-					s.Emit(s.Pos(), token.EOF, nil)
+					s.Emit(s.Pos(), tokEOF, nil)
 					if t.Failed() {
 						return nil
 					}
@@ -161,7 +140,7 @@ func TestLexer_Lex(t *testing.T) {
 		return false
 	}
 
-	stateNum := func(s *lexer.State) lexer.StateFn {
+	stateNum := func(s *lex.State) lex.StateFn {
 		num = 0
 		base = 10
 		r := s.Current()
@@ -185,26 +164,26 @@ func TestLexer_Lex(t *testing.T) {
 		return nil
 	}
 	//                                            0123456789012
-	f := token.NewFile("test", strings.NewReader("0x24 12 0666"))
+	f := lex.NewFile("test", strings.NewReader("0x24 12 0666"))
 	data := []struct {
-		t token.Type
-		p token.Pos
+		t lex.Token
+		p lex.Pos
 		v interface{}
 	}{
 		{0, 0, 36},
 		{0, 5, 12},
 		{0, 8, 438},
-		{token.Error, 12, "test queue"},
-		{token.Error, 12, "twice"},
-		{token.EOF, 12, nil},
+		{lex.Error, 12, "test queue"},
+		{lex.Error, 12, "twice"},
+		{tokEOF, 12, nil},
 	}
-	l := lexer.New(f,
-		func(s *lexer.State) lexer.StateFn {
+	l := lex.NewLexer(f,
+		func(s *lex.State) lex.StateFn {
 			r := s.Next()
 			s.StartToken(s.Pos())
 			switch r {
-			case lexer.EOF:
-				return lexer.StateEOF
+			case lex.EOF:
+				s.Emit(s.Pos(), tokEOF, nil)
 			case ' ', '\t':
 				// ignore spaces
 			case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
@@ -219,7 +198,7 @@ func TestLexer_Lex(t *testing.T) {
 		if tt != r.t || p != r.p || v != r.v {
 			t.Errorf("Got: %d %d %v, expected: %d %d %v", tt, p, v, r.t, r.p, r.v)
 		}
-		if tt == token.EOF {
+		if tt == tokEOF {
 			break
 		}
 	}

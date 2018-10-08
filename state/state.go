@@ -21,12 +21,12 @@
 // quoted characters.
 //
 // State functions in this package expect that the first character that is
-// part of the lexed entity has already been read by Lexer.Next. For example:
+// part of the lexed entity has already been read by lex.Next. For example:
 //
-//	r := l.Next()
+//	r := s.Next()
 //	switch r {
 //	case '"':
-//		// do not call l.Backup() here
+//		// do not call s.Backup() here
 //		return state.QuotedString(tokString)
 //	}
 //
@@ -37,13 +37,12 @@
 //
 package state
 
-//go:generate bash -c "godoc2md -ex -template ../../template/README.md.tpl github.com/db47h/parsekit/lexer/state >README.md"
+//go:generate bash -c "godoc2md -ex -template ../template/README.md.tpl github.com/db47h/lex/state >README.md"
 
 import (
 	"unicode/utf8"
 
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
 )
 
 const (
@@ -77,10 +76,10 @@ var msg = [...]string{
 // When entering the StateFn, the starting delimiter has already been read and
 // will be reused as end-delimiter.
 //
-func QuotedString(t token.Type) lexer.StateFn {
+func QuotedString(t lex.Token) lex.StateFn {
 	s := make([]byte, 0, 64)
 	var rb [utf8.UTFMax]byte
-	return func(l *lexer.State) lexer.StateFn {
+	return func(l *lex.State) lex.StateFn {
 		s = s[:0]
 		quote := l.Current()
 		pos := l.Pos()
@@ -118,8 +117,8 @@ func QuotedString(t token.Type) lexer.StateFn {
 // When entering the StateFn, the starting delimiter has already been read and
 // will be reused as end-delimiter.
 //
-func QuotedChar(t token.Type) lexer.StateFn {
-	return func(l *lexer.State) lexer.StateFn {
+func QuotedChar(t lex.Token) lex.StateFn {
+	return func(l *lex.State) lex.StateFn {
 		quote := l.Current()
 		pos := l.Pos()
 		r, err := readChar(l, quote)
@@ -155,8 +154,8 @@ func QuotedChar(t token.Type) lexer.StateFn {
 
 // just eat up string and look for end quote not preceded by '\'
 // TODO: if the rune that caused the error is a \, then our \ handling is off.
-func terminateString(quote rune) lexer.StateFn {
-	return func(l *lexer.State) lexer.StateFn {
+func terminateString(quote rune) lex.StateFn {
+	return func(l *lex.State) lex.StateFn {
 		for {
 			r := l.Next()
 			switch r {
@@ -164,11 +163,11 @@ func terminateString(quote rune) lexer.StateFn {
 				return nil
 			case '\\':
 				r = l.Next()
-				if r != '\n' && r != lexer.EOF {
+				if r != '\n' && r != lex.EOF {
 					continue
 				}
 				fallthrough
-			case '\n', lexer.EOF:
+			case '\n', lex.EOF:
 				// unterminated string. Just ignore the error since
 				// this function is already called on error.
 				l.Backup()
@@ -178,7 +177,7 @@ func terminateString(quote rune) lexer.StateFn {
 	}
 }
 
-func readChar(l *lexer.State, quote rune) (r rune, err int) {
+func readChar(l *lex.State, quote rune) (r rune, err int) {
 	r = l.Next()
 	switch r {
 	case quote:
@@ -227,22 +226,22 @@ func readChar(l *lexer.State, quote rune) (r rune, err int) {
 				err = errRawByte
 			}
 			return r, err
-		case '\n', lexer.EOF:
+		case '\n', lex.EOF:
 			return r, errEOL
 		default:
 			return r, errInvalidEscape
 		}
-	case '\n', lexer.EOF:
+	case '\n', lex.EOF:
 		return r, errEOL
 	}
 	return r, errNone
 }
 
-func readDigits(l *lexer.State, n, b int32) (v rune, err int) {
+func readDigits(l *lex.State, n, b int32) (v rune, err int) {
 	for i := int32(0); i < n; i++ {
 		var rl rune
 		r := l.Next()
-		if r == '\n' || r == lexer.EOF {
+		if r == '\n' || r == lex.EOF {
 			return v, errEOL
 		}
 		switch {

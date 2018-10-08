@@ -1,4 +1,4 @@
-package token_test
+package lex_test
 
 import (
 	"fmt"
@@ -6,8 +6,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
 	"golang.org/x/text/width"
 )
 
@@ -17,7 +16,11 @@ import (
 // and EOF.
 //
 func ExampleFile_GetLineBytes() {
-	expectLT := func(s *lexer.State) lexer.StateFn {
+	const (
+		tokEOF = iota
+		tokAny
+	)
+	expectLT := func(s *lex.State) lex.StateFn {
 		// digits are followed by a < in order to test proper Seek operation in input.
 		if s.Next() != '<' {
 			panic("seek to original pos failed")
@@ -25,28 +28,28 @@ func ExampleFile_GetLineBytes() {
 		return nil
 	}
 	input := "＃〄 - Hello 世界 1<\ndéjà vu 2<"
-	f := token.NewFile("INPUT", strings.NewReader(input))
-	l := lexer.New(f, func(s *lexer.State) lexer.StateFn {
+	f := lex.NewFile("INPUT", strings.NewReader(input))
+	l := lex.NewLexer(f, func(s *lex.State) lex.StateFn {
 		switch r := s.Next(); r {
-		case lexer.EOF:
+		case lex.EOF:
 			s.Errorf(s.Pos(), "some error @EOF")
-			return lexer.StateEOF
+			s.Emit(s.Pos(), tokEOF, nil)
 		case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 			s.Errorf(s.Pos(), "digit")
 			return expectLT
 		case '\n':
 			s.Errorf(s.Pos(), "newline")
 		default:
-			s.Emit(s.Pos(), 0, r)
+			s.Emit(s.Pos(), tokAny, r)
 		}
 		return nil
 	})
 	for {
 		tok, p, v := l.Lex()
-		if tok == token.EOF {
+		if tok == tokEOF {
 			break
 		}
-		if tok == token.Error {
+		if tok == lex.Error {
 			reportError(f, p, v.(string))
 		}
 	}
@@ -75,7 +78,7 @@ func ExampleFile_GetLineBytes() {
 //	file:line:col: error description
 //		source line where the error occurred followed by a line with a carret at the position of the error.
 //						      ^
-func reportError(f *token.File, p token.Pos, msg string) {
+func reportError(f *lex.File, p lex.Pos, msg string) {
 	pos := f.Position(p)
 	fmt.Printf("%s: error %s\n", pos, msg)
 	l, err := f.GetLineBytes(p)

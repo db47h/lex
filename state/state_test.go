@@ -8,14 +8,13 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/db47h/parsekit/lexer/state"
-
-	"github.com/db47h/parsekit/lexer"
-	"github.com/db47h/parsekit/token"
+	"github.com/db47h/lex"
+	"github.com/db47h/lex/state"
 )
 
 const (
-	tokInt token.Type = iota
+	tokEOF lex.Token = iota
+	tokInt
 	tokFloat
 	tokString
 	tokChar
@@ -23,16 +22,16 @@ const (
 	tokRawChar
 )
 
-func itemString(l *lexer.Lexer, t token.Type, p token.Pos, v interface{}) string {
+func itemString(l *lex.Lexer, t lex.Token, p lex.Pos, v interface{}) string {
 	var b strings.Builder
 	pos := l.File().Position(p)
 	b.WriteString(fmt.Sprintf("%d:%d ", pos.Line, pos.Column))
 	var ts, vs string
 	switch t {
-	case token.Error:
+	case lex.Error:
 		ts = "Error"
 		vs = v.(string)
-	case token.EOF:
+	case tokEOF:
 		ts = "EOF"
 	case tokFloat:
 		ts = "FLOAT"
@@ -70,14 +69,14 @@ type testData struct {
 	res  res
 }
 
-func runTests(t *testing.T, td []testData, init lexer.StateFn) {
+func runTests(t *testing.T, td []testData, init lex.StateFn) {
 	t.Helper()
 	for _, sample := range td {
 		t.Run(sample.name, func(t *testing.T) {
-			l := lexer.New(token.NewFile(sample.name, strings.NewReader(sample.in)), init)
+			l := lex.NewLexer(lex.NewFile(sample.name, strings.NewReader(sample.in)), init)
 			var (
-				tt token.Type
-				p  token.Pos
+				tt lex.Token
+				p  lex.Pos
 				v  interface{}
 			)
 			for i := range sample.res {
@@ -88,8 +87,8 @@ func runTests(t *testing.T, td []testData, init lexer.StateFn) {
 				}
 			}
 			tt, p, v = l.Lex()
-			if tt != token.EOF || int(p) != utf8.RuneCountInString(sample.in) {
-				pos := l.File().Position(token.Pos(utf8.RuneCountInString(sample.in)))
+			if tt != tokEOF || int(p) != utf8.RuneCountInString(sample.in) {
+				pos := l.File().Position(lex.Pos(utf8.RuneCountInString(sample.in)))
 				t.Errorf("Got: %s (Pos: %d), Expected: %d:%d EOF. ", itemString(l, tt, p, v), p, pos.Line, pos.Column)
 			}
 		})
@@ -114,19 +113,19 @@ func Test_QuotedString(t *testing.T) {
 		{"str10", "\"a\\\n", res{`1:1 Error unterminated string`}},
 		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
 	}
-	runTests(t, td, func(l *lexer.State) lexer.StateFn {
-		r := l.Next()
+	runTests(t, td, func(s *lex.State) lex.StateFn {
+		r := s.Next()
 		switch r {
 		case '"':
 			return state.QuotedString(tokString)
-		case lexer.EOF:
-			return lexer.StateEOF
+		case lex.EOF:
+			s.Emit(s.Pos(), tokEOF, nil)
 		case ' ', '\n', '\t':
-			for r = l.Next(); r == ' ' || r == '\n' || r == '\t'; r = l.Next() {
+			for r = s.Next(); r == ' ' || r == '\n' || r == '\t'; r = s.Next() {
 			}
-			l.Backup()
+			s.Backup()
 		default:
-			l.Emit(l.Pos(), tokRawChar, r)
+			s.Emit(s.Pos(), tokRawChar, r)
 		}
 		return nil
 	})
@@ -140,19 +139,19 @@ func Test_QuotedChar(t *testing.T) {
 			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 	}
-	runTests(t, td, func(l *lexer.State) lexer.StateFn {
-		r := l.Next()
+	runTests(t, td, func(s *lex.State) lex.StateFn {
+		r := s.Next()
 		switch r {
 		case '\'':
 			return state.QuotedChar(tokChar)
-		case lexer.EOF:
-			return lexer.StateEOF
+		case lex.EOF:
+			s.Emit(s.Pos(), tokEOF, nil)
 		case ' ', '\n', '\t':
-			for r = l.Next(); r == ' ' || r == '\n' || r == '\t'; r = l.Next() {
+			for r = s.Next(); r == ' ' || r == '\n' || r == '\t'; r = s.Next() {
 			}
-			l.Backup()
+			s.Backup()
 		default:
-			l.Emit(l.Pos(), tokRawChar, r)
+			s.Emit(s.Pos(), tokRawChar, r)
 		}
 		return nil
 	})
@@ -182,12 +181,12 @@ func Test_Number(t *testing.T) {
 			`1:11 RAWCHAR 'e'`}},
 		{`float12`, `:0238:`, res{`1:1 COLON`, `1:5 Error invalid character U+0038 '8' in base 8 literal`, `1:6 COLON`}},
 	}
-	runTests(t, td, func(s *lexer.State) lexer.StateFn {
+	runTests(t, td, func(s *lex.State) lex.StateFn {
 		r := s.Next()
 		s.StartToken(s.Pos())
 		switch r {
-		case lexer.EOF:
-			return lexer.StateEOF
+		case lex.EOF:
+			s.Emit(s.Pos(), tokEOF, nil)
 		case ':':
 			s.Emit(s.TokenPos(), tokColon, nil)
 		case '.':

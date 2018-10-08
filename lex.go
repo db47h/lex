@@ -1,4 +1,4 @@
-// Copyright 2017 Denis Bernard <db047h@gmail.com>
+// Copyright 2017-2018 Denis Bernard <db047h@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -17,21 +17,32 @@
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-package lexer
+package lex
 
 import (
 	"fmt"
 	"io"
 	"unicode/utf8"
-
-	"github.com/db47h/parsekit/token"
 )
 
+// EOF is the return value from Next() when EOF is reached.
+//
+const EOF rune = -1
+
+// Undo buffer constants.
+//
 const (
-	// BackupBufferSize is the size of the undo buffer.
-	BackupBufferSize = 16
+	BackupBufferSize = 16 // BackupBufferSize is the size of the undo buffer.
 	undoMask         = BackupBufferSize - 1
 )
+
+// A Token represents the type of a token. Custom lexers can use any value >= 0.
+//
+type Token int
+
+// Error is the token type for error tokens.
+//
+const Error Token = -1
 
 // queue is a FIFO queue.
 //
@@ -42,7 +53,13 @@ type queue struct {
 	count int
 }
 
-func (q *queue) push(t token.Type, p token.Pos, v interface{}) {
+type item struct {
+	t Token
+	p Pos
+	v interface{}
+}
+
+func (q *queue) push(t Token, p Pos, v interface{}) {
 	if q.head == q.tail && q.count > 0 {
 		items := make([]item, len(q.items)*2)
 		copy(items, q.items[q.head:])
@@ -58,24 +75,12 @@ func (q *queue) push(t token.Type, p token.Pos, v interface{}) {
 
 // pop pops the first item from the queue. Callers must check that q.count > 0 beforehand.
 //
-func (q *queue) pop() (token.Type, token.Pos, interface{}) {
+func (q *queue) pop() (Token, Pos, interface{}) {
 	i := q.head
 	q.head = (q.head + 1) % len(q.items)
 	q.count--
 	it := &q.items[i]
 	return it.t, it.p, it.v
-}
-
-// EOF is the return value from Next() when EOF is reached.
-//
-const EOF = -1
-
-// Item represents a token returned from the lexer.
-//
-type item struct {
-	t token.Type
-	p token.Pos
-	v interface{}
 }
 
 // Lexer wraps the public methods of a lexer. This interface is intended for
@@ -90,7 +95,7 @@ type Lexer state
 type State state
 
 type undo struct {
-	p token.Pos
+	p Pos
 	r rune
 }
 
@@ -98,15 +103,15 @@ type state struct {
 	buf    [4 << 10]byte          // byte buffer
 	undo   [BackupBufferSize]undo // undo buffer
 	queue                         // Item queue
-	f      *token.File
-	line   int       // line count
-	state  StateFn   // current state
-	init   StateFn   // current initial-state function.
-	offs   int       // offset of first byte in buffer
-	r, w   int       // read/write indices
-	ur, uh int       // undo buffer read pos and head
-	ts     token.Pos // token start position
-	ioErr  error     // if not nil, IO error @w
+	f      *File
+	line   int     // line count
+	state  StateFn // current state
+	init   StateFn // current initial-state function.
+	offs   int     // offset of first byte in buffer
+	r, w   int     // read/write indices
+	ur, uh int     // undo buffer read pos and head
+	ts     Pos     // token start position
+	ioErr  error   // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
@@ -116,10 +121,10 @@ type state struct {
 //
 type StateFn func(l *State) StateFn
 
-// New creates a new lexer associated with the given source file. A new lexer
-// must be created for every source file to be lexed.
+// NewLexer creates a new lexer associated with the given source file. A new
+// lexer must be created for every source file to be lexed.
 //
-func New(f *token.File, init StateFn) *Lexer {
+func NewLexer(f *File, init StateFn) *Lexer {
 	s := &state{
 		// initial q size must be an exponent of 2
 		queue: queue{items: make([]item, 2)},
@@ -153,10 +158,11 @@ func (s *State) Init(initState StateFn) StateFn {
 // Lex reads source text and returns the next item until EOF.
 //
 // As a convention, once the end of file has been reached (or some
-// non-recoverable error condition), Lex() must return an item of type
-// token.EOF. Implementors of custom lexers must take care of this.
+// non-recoverable error condition), Lex() must return a token type that
+// indicates an EOF condition. Implementors of custom lexers must take care of
+// this.
 //
-func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
+func (l *Lexer) Lex() (Token, Pos, interface{}) {
 	for l.count == 0 {
 		st := (*State)(l)
 		if l.state == nil {
@@ -168,30 +174,23 @@ func (l *Lexer) Lex() (token.Type, token.Pos, interface{}) {
 	return l.pop()
 }
 
-// StateEOF is a terminal StateFn that returns EOF.
+// File returns the File used as input for the lexer.
 //
-func StateEOF(s *State) StateFn {
-	s.Emit(s.Pos(), token.EOF, nil)
-	return StateEOF
-}
-
-// File returns the token.File used as input for the lexer.
-//
-func (l *Lexer) File() *token.File {
+func (l *Lexer) File() *File {
 	return l.f
 }
 
 // Emit emits a single token of the given type and value positioned at l.S.
 //
-func (s *State) Emit(p token.Pos, t token.Type, value interface{}) {
+func (s *State) Emit(p Pos, t Token, value interface{}) {
 	s.push(t, p, value)
 }
 
-// Errorf emits an error token. The Item value is set to a string representation
-// of the error and the position set to pos.
+// Errorf emits an error token with type Error. The Item value is set to a
+// string representation of the error and the position set to pos.
 //
-func (s *State) Errorf(p token.Pos, format string, args ...interface{}) {
-	s.push(token.Error, p, fmt.Sprintf(format, args...))
+func (s *State) Errorf(p Pos, format string, args ...interface{}) {
+	s.push(Error, p, fmt.Sprintf(format, args...))
 }
 
 // Next returns the next rune in the input stream. If the end of the input
@@ -215,7 +214,7 @@ again:
 		s.fill()
 	}
 
-	pos := token.Pos(s.offs + s.r)
+	pos := Pos(s.offs + s.r)
 
 	// Common case: ASCII
 	// Invariant: s.buf[s.w] == utf8.RuneSelf
@@ -265,7 +264,7 @@ again:
 	return r
 }
 
-func (s *State) pushUndo(p token.Pos, r rune) {
+func (s *State) pushUndo(p Pos, r rune) {
 	s.ur = s.uh
 	s.undo[s.uh] = undo{p, r}
 	s.uh = (s.uh + 1) & undoMask
@@ -295,7 +294,7 @@ func (s *State) Current() rune {
 // Pos returns the byte offset of the last rune returned by State.Next.
 // Returns -1 if no input has been read yet.
 //
-func (s *State) Pos() token.Pos {
+func (s *State) Pos() Pos {
 	return s.undo[s.ur].p
 }
 
@@ -367,12 +366,12 @@ func (s *State) Peek() rune {
 //		return nil
 //	}
 //
-func (s *State) StartToken(p token.Pos) {
+func (s *State) StartToken(p Pos) {
 	s.ts = p
 }
 
 // TokenPos returns the position set by StartToken.
 //
-func (s *State) TokenPos() token.Pos {
+func (s *State) TokenPos() Pos {
 	return s.ts
 }
