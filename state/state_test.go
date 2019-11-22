@@ -22,7 +22,7 @@ const (
 	tokRawChar
 )
 
-func itemString(l *lex.Lexer, t lex.Token, p lex.Pos, v interface{}) string {
+func itemString(l *lex.Lexer, t lex.Token, p int, v interface{}) string {
 	var b strings.Builder
 	pos := l.File().Position(p)
 	b.WriteString(fmt.Sprintf("%d:%d ", pos.Line, pos.Column))
@@ -76,7 +76,7 @@ func runTests(t *testing.T, td []testData, init lex.StateFn) {
 			l := lex.NewLexer(lex.NewFile(sample.name, strings.NewReader(sample.in)), init)
 			var (
 				tt lex.Token
-				p  lex.Pos
+				p  int
 				v  interface{}
 			)
 			for i := range sample.res {
@@ -88,7 +88,7 @@ func runTests(t *testing.T, td []testData, init lex.StateFn) {
 			}
 			tt, p, v = l.Lex()
 			if tt != tokEOF || int(p) != utf8.RuneCountInString(sample.in) {
-				pos := l.File().Position(lex.Pos(utf8.RuneCountInString(sample.in)))
+				pos := l.File().Position(utf8.RuneCountInString(sample.in))
 				t.Errorf("Got: %s (Pos: %d), Expected: %d:%d EOF. ", itemString(l, tt, p, v), p, pos.Line, pos.Column)
 			}
 		})

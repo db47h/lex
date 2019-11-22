@@ -138,8 +138,8 @@ func (l *numberLexer) stateInteger(s *lex.State) lex.StateFn {
 // i.e. anything of the form [0-9]*\.[0-9]*
 func (l *numberLexer) stateIntegerOrFloat(s *lex.State) lex.StateFn {
 	var (
-		r8 rune    // keep track of end-of base 8 literal
-		p8 lex.Pos = -1
+		r8 rune // keep track of end-of base 8 literal
+		p8 int  = -1
 	)
 	l.buf = l.buf[:0]
 	if s.Current() == '0' {

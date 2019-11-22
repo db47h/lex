@@ -26,24 +26,15 @@ import (
 	"io"
 )
 
-// Pos represents a token's position within a File. This is a rune index rather
-// than a byte index.
-// For error reporting, this is not really an issue even for editors that do not
-// support rune-indexing since after conversion to the line:column based
-// Position, the line number is accurate and the column might be off by only a
-// few bytes.
+// IsValidOffset returns true if offset is a valid file offset (i.e. p >= 0).
 //
-type Pos int
-
-// IsValid returns true if p is a valid position (i.e. p >= 0).
-//
-func (p Pos) IsValid() bool {
-	return p >= 0
+func IsValidOffset(offset int) bool {
+	return offset >= 0
 }
 
 // Common errors.
 var (
-	ErrSeek   = errors.New("wrong file position after seek")
+	ErrSeek   = errors.New("wrong file offset after seek")
 	ErrNoSeek = errors.New("io.Reader dos not support Seek")
 	ErrLine   = errors.New("invalid line number")
 )
@@ -66,7 +57,7 @@ func (p Position) String() string {
 type File struct {
 	name string
 	io.Reader
-	lines []Pos // 0-based line/Pos information
+	lines []int // 0-based line/offset information
 }
 
 // NewFile returns a new File.
@@ -84,52 +75,52 @@ func (f *File) Name() string {
 	return f.name
 }
 
-// AddLine adds a new line at the given offset.
+// AddLine adds a new line at the given file offset.
 //
 // line is the 1-based line index.
 //
-// If pos represents a position before the position of the last known line,
+// If offset is before the offset of the last known line,
 // or if line is not equal to the last know line number plus one, AddLine will
 // panic.
 //
-func (f *File) AddLine(pos Pos, line int) {
+func (f *File) AddLine(offset int, line int) {
 	l := len(f.lines)
-	if (l > 0 && f.lines[l-1] >= pos) || l+1 != line {
+	if (l > 0 && f.lines[l-1] >= offset) || l+1 != line {
 		panic(ErrLine)
 	}
-	f.lines = append(f.lines, pos)
+	f.lines = append(f.lines, offset)
 }
 
-// Position returns the 1-based line and column for a given pos. The returned
-// column is a byte offset, not a rune offset.
+// Position returns the 1-based line and column for a given file offset.
+// The returned column is a byte offset, not a rune offset.
 //
-func (f *File) Position(pos Pos) Position {
+func (f *File) Position(offset int) Position {
 	i, j := 0, len(f.lines)
 	for i < j {
 		h := int(uint(i+j) >> 1)
-		if !(f.lines[h] > pos) {
+		if !(f.lines[h] > offset) {
 			i = h + 1
 		} else {
 			j = h
 		}
 	}
-	return Position{f.name, i, int(pos - f.lines[i-1] + 1)}
+	return Position{f.name, i, int(offset - f.lines[i-1] + 1)}
 }
 
-// LinePos return the file offset of the given line.
+// LineOffset returns the file offset of the given line.
 //
-func (f *File) LinePos(line int) Pos {
+func (f *File) LineOffset(line int) int {
 	if line < 1 || line > len(f.lines) {
 		return -1
 	}
 	return f.lines[line-1]
 }
 
-// GetLineBytes returns a string containing the line for position pos.
+// GetLineBytes returns a string containing the line for the given file offset.
 //
-func (f *File) GetLineBytes(pos Pos) (l []byte, err error) {
-	lp := f.LinePos(f.Position(pos).Line)
-	if !lp.IsValid() {
+func (f *File) GetLineBytes(offset int) (l []byte, err error) {
+	lp := f.LineOffset(f.Position(offset).Line)
+	if !IsValidOffset(lp) {
 		return nil, ErrLine
 	}
 	rs, ok := f.Reader.(io.ReadSeeker)

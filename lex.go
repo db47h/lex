@@ -55,11 +55,11 @@ type queue struct {
 
 type item struct {
 	t Token
-	p Pos
+	p int
 	v interface{}
 }
 
-func (q *queue) push(t Token, p Pos, v interface{}) {
+func (q *queue) push(t Token, p int, v interface{}) {
 	if q.head == q.tail && q.count > 0 {
 		items := make([]item, len(q.items)*2)
 		copy(items, q.items[q.head:])
@@ -75,7 +75,7 @@ func (q *queue) push(t Token, p Pos, v interface{}) {
 
 // pop pops the first item from the queue. Callers must check that q.count > 0 beforehand.
 //
-func (q *queue) pop() (Token, Pos, interface{}) {
+func (q *queue) pop() (Token, int, interface{}) {
 	i := q.head
 	q.head = (q.head + 1) % len(q.items)
 	q.count--
@@ -95,7 +95,7 @@ type Lexer state
 type State state
 
 type undo struct {
-	p Pos
+	p int
 	r rune
 }
 
@@ -110,13 +110,13 @@ type state struct {
 	offs   int     // offset of first byte in buffer
 	r, w   int     // read/write indices
 	ur, uh int     // undo buffer read pos and head
-	ts     Pos     // token start position
+	ts     int     // token start offset
 	ioErr  error   // if not nil, IO error @w
 }
 
 // A StateFn is a state function.
 //
-// If a StateFn returns nil, the lexer resets the current token start position
+// If a StateFn returns nil, the lexer resets the current token starting offset
 // then transitions back to its initial state function.
 //
 type StateFn func(l *State) StateFn
@@ -162,7 +162,7 @@ func (s *State) Init(initState StateFn) StateFn {
 // indicates an EOF condition. Implementors of custom lexers must take care of
 // this.
 //
-func (l *Lexer) Lex() (Token, Pos, interface{}) {
+func (l *Lexer) Lex() (Token, int, interface{}) {
 	for l.count == 0 {
 		st := (*State)(l)
 		if l.state == nil {
@@ -180,17 +180,18 @@ func (l *Lexer) File() *File {
 	return l.f
 }
 
-// Emit emits a single token of the given type and value positioned at l.S.
+// Emit emits a single token of the given type and value. offset is the file
+// offset for the token (usually s.TokenPos()).
 //
-func (s *State) Emit(p Pos, t Token, value interface{}) {
-	s.push(t, p, value)
+func (s *State) Emit(offset int, t Token, value interface{}) {
+	s.push(t, offset, value)
 }
 
 // Errorf emits an error token with type Error. The Item value is set to a
-// string representation of the error and the position set to pos.
+// string representation of the error and offset is the file offset.
 //
-func (s *State) Errorf(p Pos, format string, args ...interface{}) {
-	s.push(Error, p, fmt.Sprintf(format, args...))
+func (s *State) Errorf(offset int, format string, args ...interface{}) {
+	s.push(Error, offset, fmt.Sprintf(format, args...))
 }
 
 // Next returns the next rune in the input stream. If the end of the input
@@ -214,31 +215,31 @@ again:
 		s.fill()
 	}
 
-	pos := Pos(s.offs + s.r)
+	off := s.offs + s.r
 
 	// Common case: ASCII
 	// Invariant: s.buf[s.w] == utf8.RuneSelf
 	if b := s.buf[s.r]; b < utf8.RuneSelf {
 		s.r++
 		if b == 0 {
-			s.Errorf(pos, "invalid NUL character")
+			s.Errorf(off, "invalid NUL character")
 			goto again
 		}
 		if b == '\n' {
 			s.line++
-			s.f.AddLine(pos+1, s.line)
+			s.f.AddLine(off+1, s.line)
 		}
-		s.pushUndo(pos, rune(b))
+		s.pushUndo(off, rune(b))
 		return rune(b)
 	}
 
 	// EOF
 	if s.r == s.w {
 		if s.undo[s.ur].r != EOF {
-			s.pushUndo(pos, EOF)
+			s.pushUndo(off, EOF)
 		}
 		if s.ioErr != io.EOF {
-			s.Errorf(pos, "I/O error: "+s.ioErr.Error())
+			s.Errorf(off, "I/O error: "+s.ioErr.Error())
 		}
 		return EOF
 	}
@@ -247,26 +248,26 @@ again:
 	r, w := utf8.DecodeRune(s.buf[s.r:s.w])
 	s.r += w
 	if r == utf8.RuneError && w == 1 {
-		s.Errorf(pos, "invalid UTF-8 encoding")
+		s.Errorf(off, "invalid UTF-8 encoding")
 		goto again
 	}
 
 	// BOM only allowed as first rune in the file
 	const BOM = 0xfeff
 	if r == BOM {
-		if pos > 0 {
-			s.Errorf(pos, "invalid BOM in the middle of the file")
+		if off > 0 {
+			s.Errorf(off, "invalid BOM in the middle of the file")
 		}
 		goto again
 	}
 
-	s.pushUndo(pos, r)
+	s.pushUndo(off, r)
 	return r
 }
 
-func (s *State) pushUndo(p Pos, r rune) {
+func (s *State) pushUndo(off int, r rune) {
 	s.ur = s.uh
-	s.undo[s.uh] = undo{p, r}
+	s.undo[s.uh] = undo{off, r}
 	s.uh = (s.uh + 1) & undoMask
 	s.undo[s.uh] = undo{-1, utf8.RuneSelf}
 }
@@ -275,7 +276,7 @@ func (s *State) pushUndo(p Pos, r rune) {
 // (BackupBufferSize-1) times in a row (i.e. with no calls to Next in between).
 // Calling Backup beyond the start of the undo buffer or at the beginning
 // of the input stream will fail silently, Pos will return -1 (an invalid
-// position) and Current will return utf8.RuneSelf, a value impossible to get
+// offset) and Current will return utf8.RuneSelf, a value impossible to get
 // by any other means.
 //
 func (s *State) Backup() {
@@ -294,7 +295,7 @@ func (s *State) Current() rune {
 // Pos returns the byte offset of the last rune returned by State.Next.
 // Returns -1 if no input has been read yet.
 //
-func (s *State) Pos() Pos {
+func (s *State) Pos() int {
 	return s.undo[s.ur].p
 }
 
@@ -335,8 +336,8 @@ func (s *State) Peek() rune {
 	return r
 }
 
-// StartToken sets p as a token start position. This is a utility function that
-// when used in conjunction with TokenPos enables tracking of a token start
+// StartToken sets offset as a token start offset. This is a utility function
+// that when used in conjunction with TokenPos enables tracking of a token start
 // position across a StateFn chain without having to manually keep track of it
 // via closures or function parameters.
 //
@@ -361,17 +362,17 @@ func (s *State) Peek() rune {
 //			tokBuf = append(tokBuf, r)
 //		}
 //		s.Backup()
-//		// TokenPos gives us the token start position set in stateInit
+//		// TokenPos gives us the token starting offset set in stateInit
 //		s.Emit(s.TokenPos(), tokTypeIdentifier, string(tokBuf))
 //		return nil
 //	}
 //
-func (s *State) StartToken(p Pos) {
-	s.ts = p
+func (s *State) StartToken(offset int) {
+	s.ts = offset
 }
 
-// TokenPos returns the position set by StartToken.
+// TokenPos returns the last offset set by StartToken.
 //
-func (s *State) TokenPos() Pos {
+func (s *State) TokenPos() int {
 	return s.ts
 }
