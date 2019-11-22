@@ -25,7 +25,7 @@ const (
 	tokChar
 )
 
-func tString(t lex.Token, p lex.Pos, v interface{}) string {
+func tString(t lex.Token, p int, v interface{}) string {
 	switch t {
 	case tokEOF:
 		return "EOF"
@@ -50,7 +50,7 @@ func TestLexer_Next(t *testing.T) {
 	cur := func(s *lex.State) rune { return s.Current() }
 
 	input := []string{
-		"ab",
+		"aéb",
 		"c",
 		"\n\n",
 	}
@@ -58,26 +58,27 @@ func TestLexer_Next(t *testing.T) {
 	data := [][]struct {
 		name string
 		fn   func(l *lex.State) rune
-		p    lex.Pos
+		p    int
 		r    rune
 	}{
 		{
-			{"ab", cur, -1, utf8.RuneSelf},
+			{"aéb", cur, -1, utf8.RuneSelf},
 			{"an", next, 0, 'a'},
-			{"bn1", next, 1, 'b'},
-			{"bb", backup, 0, 'a'},
-			{"bp1", peek, 0, 'b'},
-			{"bn2", next, 1, 'b'},
-			{"bn3", next, 2, lex.EOF},
-			{"bb1", backup, 1, 'b'},
-			{"bp2", peek, 1, lex.EOF},
-			{"eof1", next, 2, lex.EOF},
-			{"eofb", backup, 1, 'b'},
-			{"eof2", next, 2, lex.EOF},
-			{"eofp1", peek, 2, lex.EOF},
-			{"eof4", next, 2, lex.EOF},
-			{"eofb2", backup, 1, 'b'},
-			{"eofp2", peek, 1, lex.EOF},
+			{"én1", next, 1, 'é'},
+			{"bn1", next, 3, 'b'},
+			{"_b", backup, 1, 'é'},
+			{"bp1", peek, 1, 'b'},
+			{"bn2", next, 3, 'b'},
+			{"bn3", next, 4, lex.EOF},
+			{"bb1", backup, 3, 'b'},
+			{"bp2", peek, 3, lex.EOF},
+			{"eof1", next, 4, lex.EOF},
+			{"eofb", backup, 3, 'b'},
+			{"eof2", next, 4, lex.EOF},
+			{"eofp1", peek, 4, lex.EOF},
+			{"eof4", next, 4, lex.EOF},
+			{"eofb2", backup, 3, 'b'},
+			{"eofp2", peek, 3, lex.EOF},
 		},
 		{
 			{"cb0", cur, -1, utf8.RuneSelf},
@@ -167,7 +168,7 @@ func TestLexer_Lex(t *testing.T) {
 	f := lex.NewFile("test", strings.NewReader("0x24 12 0666"))
 	data := []struct {
 		t lex.Token
-		p lex.Pos
+		p int
 		v interface{}
 	}{
 		{0, 0, 36},

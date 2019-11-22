@@ -78,7 +78,7 @@ func ExampleFile_GetLineBytes() {
 //	file:line:col: error description
 //		source line where the error occurred followed by a line with a carret at the position of the error.
 //						      ^
-func reportError(f *lex.File, p lex.Pos, msg string) {
+func reportError(f *lex.File, p int, msg string) {
 	pos := f.Position(p)
 	fmt.Printf("%s: error %s\n", pos, msg)
 	l, err := f.GetLineBytes(p)
