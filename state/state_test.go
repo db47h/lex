@@ -30,7 +30,7 @@ func itemString(l *lex.Lexer, t lex.Token, p int, v interface{}) string {
 	switch t {
 	case lex.Error:
 		ts = "Error"
-		vs = v.(string)
+		vs = v.(error).Error()
 	case tokEOF:
 		ts = "EOF"
 	case tokFloat:

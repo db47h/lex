@@ -50,7 +50,7 @@ func ExampleFile_GetLineBytes() {
 			break
 		}
 		if tok == lex.Error {
-			reportError(f, p, v.(string))
+			reportError(f, p, v.(error).Error())
 		}
 	}
 

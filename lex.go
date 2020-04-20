@@ -20,10 +20,32 @@
 package lex
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"unicode/utf8"
 )
+
+// Base errors returned by errors.Is() for any Error token emitted as a result
+// of a non-recoverable I/O error or invalid UTF-8 encoding in the input stream.
+//
+var (
+	ErrIO          = errors.New("I/O error")
+	ErrInvalidUTF8 = errors.New("invalid UTF-8")
+)
+
+type ioError struct {
+	err error
+}
+
+func (e *ioError) Error() string      { return e.err.Error() }
+func (e *ioError) Unwrap() error      { return e.err }
+func (*ioError) Is(target error) bool { return target == ErrIO }
+
+type utf8Error string
+
+func (e utf8Error) Error() string      { return string(e) }
+func (utf8Error) Is(target error) bool { return target == ErrInvalidUTF8 }
 
 // EOF is the return value from Next() when EOF is reached.
 //
@@ -60,6 +82,11 @@ type item struct {
 }
 
 func (q *queue) push(t Token, p int, v interface{}) {
+	if t == Error {
+		if _, ok := v.(error); !ok {
+			panic("token value must implement the error interface for Error tokens")
+		}
+	}
 	if q.head == q.tail && q.count > 0 {
 		items := make([]item, len(q.items)*2)
 		copy(items, q.items[q.head:])
@@ -160,8 +187,8 @@ func (s *State) Init(initState StateFn) StateFn {
 //
 // As a convention, once the end of file has been reached (or some
 // non-recoverable error condition), Lex() must return a token type that
-// indicates an EOF condition. Implementors of custom lexers must take care of
-// this.
+// indicates an EOF condition. A common strategy is to emit an Error token with
+// io.EOF as a value.
 //
 func (l *Lexer) Lex() (Token, int, interface{}) {
 	for l.count == 0 {
@@ -184,15 +211,17 @@ func (l *Lexer) File() *File {
 // Emit emits a single token of the given type and value. offset is the file
 // offset for the token (usually s.TokenPos()).
 //
+// If the emitted token is Error, the value must be an error interface.
+//
 func (s *State) Emit(offset int, t Token, value interface{}) {
 	s.push(t, offset, value)
 }
 
-// Errorf emits an error token with type Error. The Item value is set to a
-// string representation of the error and offset is the file offset.
+// Errorf emits an error token with type Error. The Item value is set to the
+// result of calling fmt.Errorf(format, args...) and offset is the file offset.
 //
 func (s *State) Errorf(offset int, format string, args ...interface{}) {
-	s.push(Error, offset, fmt.Sprintf(format, args...))
+	s.push(Error, offset, fmt.Errorf(format, args...))
 }
 
 // Next returns the next rune in the input stream. If the end of the input
@@ -223,7 +252,7 @@ again:
 	if b := s.buf[s.r]; b < utf8.RuneSelf {
 		s.r++
 		if b == 0 {
-			s.Errorf(off, "invalid NUL character")
+			s.Emit(off, Error, utf8Error("invalid NUL character"))
 			goto again
 		}
 		if b == '\n' {
@@ -240,7 +269,7 @@ again:
 			s.pushUndo(off, EOF)
 		}
 		if s.ioErr != io.EOF {
-			s.Errorf(off, "I/O error: "+s.ioErr.Error())
+			s.Emit(off, Error, &ioError{s.ioErr})
 		}
 		return EOF
 	}
@@ -249,7 +278,7 @@ again:
 	r, w := utf8.DecodeRune(s.buf[s.r:s.w])
 	s.r += w
 	if r == utf8.RuneError && w == 1 {
-		s.Errorf(off, "invalid UTF-8 encoding")
+		s.Emit(off, Error, utf8Error("invalid UTF-8 encoding"))
 		goto again
 	}
 
@@ -257,7 +286,7 @@ again:
 	const BOM = 0xfeff
 	if r == BOM {
 		if off > 0 {
-			s.Errorf(off, "invalid BOM in the middle of the file")
+			s.Emit(off, Error, utf8Error("invalid BOM in the middle of the file"))
 		}
 		goto again
 	}

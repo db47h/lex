@@ -109,8 +109,24 @@ automatically emitted whenever an I/O error occurs or on invalid UTF-8 input.
 I/O errors are non-recoverable, that is the next call to Lexer.Lex will return
 EOF.
 
-While invalid UTF-8 input generates error tokens, the lexer just skips over it.
+While invalid UTF-8 input generates Error tokens, the lexer just skips over it.
 Client code may choose to ignore it or just issue a warning.
+
+Client code may use errors.Is() against the token literal in order to check for
+I/O or UTF-8 encoding errors:
+
+	for {
+		t, p, v := l.Lex()
+		switch t {
+		case lex.Error:
+			if errors.Is(v.(error), lex.ErrInvalidUTF8) {
+				// only issue a warning
+				log.Printf("WARN: %v: %v", l.File().Position(o), v.(error))
+				continue
+			}
+		// ...
+		}
+	}
 
 State sub-package
 
