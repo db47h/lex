@@ -1,4 +1,4 @@
-// Copyright 2017-2018 Denis Bernard <db047h@gmail.com>
+// Copyright 2017-2020 Denis Bernard <db047h@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -32,7 +32,7 @@ const EOF rune = -1
 // Undo buffer constants.
 //
 const (
-	BackupBufferSize = 16 // BackupBufferSize is the size of the undo buffer.
+	BackupBufferSize = 16 // Size of the undo buffer.
 	undoMask         = BackupBufferSize - 1
 )
 
@@ -147,12 +147,13 @@ func NewLexer(f *File, init StateFn) *Lexer {
 
 // Init (re-)sets the initial state function for the lexer. It can be used by
 // state functions to implement context switches (e.g. switch from accepting
-// plain text to expressions in a template like language). This function returns
-// its argument.
+// plain text to expressions in a template-like language). This function returns
+// the previous initial state.
 //
 func (s *State) Init(initState StateFn) StateFn {
+	prev := s.init
 	s.init = initState
-	return initState
+	return prev
 }
 
 // Lex reads source text and returns the next item until EOF.

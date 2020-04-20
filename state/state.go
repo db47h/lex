@@ -1,4 +1,4 @@
-// Copyright 2017-2018 Denis Bernard <db047h@gmail.com>
+// Copyright 2017-2020 Denis Bernard <db047h@gmail.com>
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
@@ -21,7 +21,7 @@
 // quoted characters.
 //
 // State functions in this package expect that the first character that is
-// part of the lexed entity has already been read by lex.Next. For example:
+// part of the lexed entity has already been read by State.Next. For example:
 //
 //	r := s.Next()
 //	switch r {
@@ -30,14 +30,12 @@
 //		return state.QuotedString(tokString)
 //	}
 //
-// All functions (with the exception of EOF) are in fact constructors that
-// take a at least a token type as argument and return closures. Note that
-// because some of these constructors pre-allocate buffers, using the returned
-// state functions concurrently is not safe. See the examples for correct usage.
+// All functions are constructors that take a at least a lex.Token as argument
+// and return closures. Note that because some of these constructors
+// pre-allocate buffers, using the returned state functions concurrently is not
+// safe. See the examples for correct usage.
 //
 package state
-
-//go:generate bash -c "godoc2md -ex -template ../template/README.md.tpl github.com/db47h/lex/state >README.md"
 
 import (
 	"unicode/utf8"
@@ -147,13 +145,14 @@ func QuotedChar(t lex.Token) lex.StateFn {
 			l.Errorf(l.Pos(), msg[err], l.Current())
 			return terminateString(quote)
 		default:
-			panic("unexpected return value from readChar")
+			panic("BUG: unexpected return value from readChar")
 		}
 	}
 }
 
-// just eat up string and look for end quote not preceded by '\'
+// terminateString eats up input looking for an end quote not preceded by '\'
 // TODO: if the rune that caused the error is a \, then our \ handling is off.
+//
 func terminateString(quote rune) lex.StateFn {
 	return func(l *lex.State) lex.StateFn {
 		for {
