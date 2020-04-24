@@ -1,6 +1,7 @@
 package lex_test
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -202,5 +203,17 @@ func TestLexer_Lex(t *testing.T) {
 		if tt == tokEOF {
 			break
 		}
+	}
+}
+
+func TestEncodingError(t *testing.T) {
+	e := errors.New("foo error")
+	var ee *lex.EncodingError
+	if errors.As(e, &ee) {
+		t.Fatal("unexpected As working")
+	}
+	e = fmt.Errorf("this is an Encoding error: %w", lex.ErrInvalidBOM)
+	if !errors.As(e, &ee) {
+		t.Fatal("unexpected As not working")
 	}
 }

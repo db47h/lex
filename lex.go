@@ -26,26 +26,26 @@ import (
 	"unicode/utf8"
 )
 
-// Base errors returned by errors.Is() for any Error token emitted as a result
-// of a non-recoverable I/O error or invalid UTF-8 encoding in the input stream.
+// An EncodingError may be emitted by State.ReadRune upon reading invalid UTF-8 data.
 //
-var (
-	ErrIO          = errors.New("I/O error")
-	ErrInvalidUTF8 = errors.New("invalid UTF-8")
-)
-
-type ioError struct {
-	err error
+type EncodingError struct {
+	s string
 }
 
-func (e *ioError) Error() string      { return e.err.Error() }
-func (e *ioError) Unwrap() error      { return e.err }
-func (*ioError) Is(target error) bool { return target == ErrIO }
+func (e EncodingError) Error() string { return e.s }
 
-type utf8Error string
+// Encoding errors.
+//
+var (
+	ErrNulChar     = &EncodingError{"invalid NUL character"}
+	ErrInvalidRune = &EncodingError{"invalid UTF-8 encoding"}
+	ErrInvalidBOM  = &EncodingError{"invalid BOM in the middle of the file"}
+)
 
-func (e utf8Error) Error() string      { return string(e) }
-func (utf8Error) Is(target error) bool { return target == ErrInvalidUTF8 }
+// ErrInvalidUnreadRune is returned by State.UnreadRune if the undo buffer is
+// empty.
+//
+var ErrInvalidUnreadRune = errors.New("invalid use of UnreadRune")
 
 // EOF is the return value from Next() when EOF is reached.
 //
@@ -124,6 +124,7 @@ type State state
 type undo struct {
 	p int
 	r rune
+	s int
 }
 
 type state struct {
@@ -164,9 +165,8 @@ func NewLexer(f *File, init StateFn) *Lexer {
 	// add line 1 to file
 	f.AddLine(0, 1)
 	// sentinel values
-	s.buf[0] = utf8.RuneSelf
 	for i := range s.undo {
-		s.undo[i] = undo{-1, utf8.RuneSelf}
+		s.undo[i] = undo{-1, utf8.RuneSelf, 1}
 	}
 
 	return (*Lexer)(s)
@@ -234,72 +234,86 @@ func (s *State) Errorf(offset int, format string, args ...interface{}) {
 // ignored).
 //
 func (s *State) Next() rune {
+	r, _, err := s.ReadRune()
+	if err != nil {
+		if err != io.EOF {
+			s.Emit(s.Pos(), Error, err)
+			s.ioErr = io.EOF
+		}
+		return EOF
+	}
+	return r
+}
+
+// ReadRune reads a single UTF-8 encoded Unicode character and returns the
+// rune and its size in bytes. The returned rune is always valid. Invalid runes,
+// NUL bytes and misplaced BOMs are filtered out and emitted as Error tokens.
+//
+// This function is here to facilitate interfacing with standard library
+// scanners that need an io.RuneScanner. Custom lexers should use the Next
+// function instead.
+//
+func (s *State) ReadRune() (rune, int, error) {
 	// read from undo buffer
-	u := (s.ur + 1) & undoMask
-	if u != s.uh {
+	if u := (s.ur + 1) & undoMask; u != s.uh {
 		s.ur = u
-		return s.undo[s.ur].r
+		return s.undo[u].r, s.undo[u].s, nil
 	}
 again:
-	for s.r+utf8.UTFMax > s.w && !utf8.FullRune(s.buf[s.r:s.w]) && s.ioErr == nil {
+	for s.r+utf8.UTFMax > s.w && !utf8.FullRune(s.buf[s.r:s.w]) && s.ioErr == nil && s.w-s.r < len(s.buf) {
 		s.fill()
 	}
 
 	off := s.offs + s.r
 
+	// @ EOF
+	if s.r == s.w {
+		if s.Current() != EOF {
+			s.pushUndo(off, EOF, 1)
+		}
+		return 0, 0, s.ioErr
+	}
+
 	// Common case: ASCII
-	// Invariant: s.buf[s.w] == utf8.RuneSelf
 	if b := s.buf[s.r]; b < utf8.RuneSelf {
 		s.r++
 		if b == 0 {
-			s.Emit(off, Error, utf8Error("invalid NUL character"))
+			s.Emit(off, Error, ErrNulChar)
 			goto again
 		}
 		if b == '\n' {
 			s.line++
 			s.f.AddLine(off+1, s.line)
 		}
-		s.pushUndo(off, rune(b))
-		return rune(b)
-	}
-
-	// EOF
-	if s.r == s.w {
-		if s.undo[s.ur].r != EOF {
-			s.pushUndo(off, EOF)
-		}
-		if s.ioErr != io.EOF {
-			s.Emit(off, Error, &ioError{s.ioErr})
-		}
-		return EOF
+		s.pushUndo(off, rune(b), 1)
+		return rune(b), 1, nil
 	}
 
 	// UTF8
 	r, w := utf8.DecodeRune(s.buf[s.r:s.w])
 	s.r += w
 	if r == utf8.RuneError && w == 1 {
-		s.Emit(off, Error, utf8Error("invalid UTF-8 encoding"))
+		s.Emit(off, Error, ErrInvalidRune)
 		goto again
 	}
 
 	// BOM only allowed as first rune in the file
-	const BOM = 0xfeff
-	if r == BOM {
+	if r == 0xfeff {
 		if off > 0 {
-			s.Emit(off, Error, utf8Error("invalid BOM in the middle of the file"))
+			s.Emit(off, Error, ErrInvalidBOM)
 		}
 		goto again
 	}
 
-	s.pushUndo(off, r)
-	return r
+	s.pushUndo(off, r, w)
+	return r, w, nil
 }
 
-func (s *State) pushUndo(off int, r rune) {
+func (s *State) pushUndo(off int, r rune, sz int) {
 	s.ur = s.uh
-	s.undo[s.uh] = undo{off, r}
+	s.undo[s.uh] = undo{off, r, sz}
 	s.uh = (s.uh + 1) & undoMask
-	s.undo[s.uh] = undo{-1, utf8.RuneSelf}
+	s.undo[s.uh] = undo{-1, utf8.RuneSelf, 1}
 }
 
 // Backup reverts the last call to Next. Backup can be called at most
@@ -314,6 +328,17 @@ func (s *State) Backup() {
 		return
 	}
 	s.ur = (s.ur - 1) & undoMask
+}
+
+// UnreadRune reverts the last call to ReadRune. It is essentially the same as
+// Backup except for the error return value.
+//
+func (s *State) UnreadRune() error {
+	if s.undo[s.ur].p == -1 {
+		return ErrInvalidUnreadRune
+	}
+	s.ur = (s.ur - 1) & undoMask
+	return nil
 }
 
 // Current returns the last rune returned by State.Next.
@@ -339,13 +364,13 @@ func (s *State) fill() {
 	}
 
 	for i := 0; i < 100; i++ {
-		n, err := s.f.Read(s.buf[s.w : len(s.buf)-1]) // -1 to leave space for sentinel
+		n, err := s.f.Read(s.buf[s.w:len(s.buf)])
 		s.w += n
-		if n > 0 || err != nil {
-			s.buf[s.w] = utf8.RuneSelf // sentinel
-			if err != nil {
-				s.ioErr = err
-			}
+		if err != nil {
+			s.ioErr = err
+			return
+		}
+		if s.w-s.r >= utf8.UTFMax {
 			return
 		}
 	}

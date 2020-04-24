@@ -106,27 +106,17 @@ Error handling
 The lex package provides a single built-in Error token. This token is
 automatically emitted whenever an I/O error occurs or on invalid UTF-8 input.
 
-I/O errors are non-recoverable, that is the next call to Lexer.Lex will return
-EOF.
+I/O errors are non-recoverable, that is any subsequent call to Lexer.Lex will
+return EOF.
 
-While invalid UTF-8 input generates Error tokens, the lexer just skips over it.
-Client code may choose to ignore it or just issue a warning.
+State.Next and State.ReadRune always return valid runes. Any invalid UTF-8 input
+will be skipped and a matching Error token will be automatiocally generated.
 
-Client code may use errors.Is() against the token literal in order to check for
-I/O or UTF-8 encoding errors:
-
-	for {
-		t, p, v := l.Lex()
-		switch t {
-		case lex.Error:
-			if errors.Is(v.(error), lex.ErrInvalidUTF8) {
-				// only issue a warning
-				log.Printf("WARN: %v: %v", l.File().Position(o), v.(error))
-				continue
-			}
-		// ...
-		}
-	}
+Caveat: This may lead to Error tokens appearing alongside seemingly valid
+tokens in the token stream. For example, lexing numbers in "1\02" will yield
+an automatically generated Error token followed by some other token with literal
+value "12". This should be taken into account when implementing error handling
+strategies.
 
 State sub-package
 

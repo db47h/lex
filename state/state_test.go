@@ -105,13 +105,13 @@ func Test_QuotedString(t *testing.T) {
 			`1:21 Error escape sequence is invalid Unicode code point`,
 			`1:32 Error escape sequence is invalid Unicode code point`,
 		}},
-		{"str5", `"a`, res{`1:1 Error unterminated string`}},
+		{"str5", `"a`, res{`1:1 Error string literal not terminated`}},
 		{"str6", `"\x2X"`, res{`1:5 Error non-hex character in escape sequence: U+0058 'X'`}},
 		{"str7", `"\277" "\28"`, res{`1:1 STRING "\xbf"`, `1:11 Error non-octal character in escape sequence: U+0038 '8'`}},
 		{"str8", `"\w"`, res{`1:3 Error unknown escape sequence`}},
-		{"str9", "\"a\n", res{`1:1 Error unterminated string`}},
-		{"str10", "\"a\\\n", res{`1:1 Error unterminated string`}},
-		{"str11", "\"\\21\n", res{`1:1 Error unterminated string`}},
+		{"str9", "\"a\n", res{`1:1 Error string literal not terminated`}},
+		{"str10", "\"a\\\n", res{`1:1 Error string literal not terminated`}},
+		{"str11", "\"\\21\n", res{`1:1 Error string literal not terminated`}},
 	}
 	runTests(t, td, func(s *lex.State) lex.StateFn {
 		r := s.Next()
@@ -136,7 +136,7 @@ func Test_QuotedChar(t *testing.T) {
 		{"char1", `'a' ''`, res{`1:1 CHAR 'a'`, `1:6 Error empty character literal or unescaped ' in character literal`}},
 		{"char2", `'aa'`, res{`1:3 Error invalid character literal (more than 1 character)`}},
 		{"char4", `'\z' '
-			`, res{`1:3 Error unknown escape sequence`, `1:6 Error unterminated character literal`}},
+			`, res{`1:3 Error unknown escape sequence`, `1:6 Error character literal not terminated`}},
 		{"char5", `'\18`, res{`1:4 Error non-octal character in escape sequence: U+0038 '8'`}},
 	}
 	runTests(t, td, func(s *lex.State) lex.StateFn {

@@ -58,7 +58,7 @@ const (
 
 var msg = [...]string{
 	errNone:          "",
-	errEOL:           "unterminated %s",
+	errEOL:           "%s literal not terminated",
 	errInvalidEscape: "unknown escape sequence",
 	errInvalidRune:   "escape sequence is invalid Unicode code point",
 	errInvalidHex:    "non-hex character in escape sequence: %#U",
@@ -136,7 +136,7 @@ func QuotedChar(t lex.Token) lex.StateFn {
 			return nil
 		case errEOL:
 			l.Backup()
-			l.Errorf(pos, msg[errEOL], "character literal")
+			l.Errorf(pos, msg[errEOL], "character")
 			return nil // keep going
 		case errInvalidEscape, errInvalidRune:
 			l.Errorf(l.Pos(), msg[err])
