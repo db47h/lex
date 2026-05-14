@@ -27,7 +27,6 @@ import (
 )
 
 // An EncodingError may be emitted by State.ReadRune upon reading invalid UTF-8 data.
-//
 type EncodingError struct {
 	s string
 }
@@ -35,7 +34,6 @@ type EncodingError struct {
 func (e EncodingError) Error() string { return e.s }
 
 // Encoding errors.
-//
 var (
 	ErrNulChar     = &EncodingError{"invalid NUL character"}
 	ErrInvalidRune = &EncodingError{"invalid UTF-8 encoding"}
@@ -44,30 +42,24 @@ var (
 
 // ErrInvalidUnreadRune is returned by State.UnreadRune if the undo buffer is
 // empty.
-//
 var ErrInvalidUnreadRune = errors.New("invalid use of UnreadRune")
 
 // EOF is the return value from Next() when EOF is reached.
-//
 const EOF rune = -1
 
 // Undo buffer constants.
-//
 const (
 	BackupBufferSize = 16 // Size of the undo buffer.
 	undoMask         = BackupBufferSize - 1
 )
 
 // A Token represents the type of a token. Custom lexers can use any value >= 0.
-//
 type Token int
 
 // Error is the token type for error tokens.
-//
 const Error Token = -1
 
 // queue is a FIFO queue.
-//
 type queue struct {
 	items []item
 	head  int
@@ -101,7 +93,6 @@ func (q *queue) push(t Token, p int, v interface{}) {
 }
 
 // pop pops the first item from the queue. Callers must check that q.count > 0 beforehand.
-//
 func (q *queue) pop() (Token, int, interface{}) {
 	i := q.head
 	q.head = (q.head + 1) % len(q.items)
@@ -112,13 +103,11 @@ func (q *queue) pop() (Token, int, interface{}) {
 
 // Lexer wraps the public methods of a lexer. This interface is intended for
 // parsers that call New(), then Lex() until EOF.
-//
 type Lexer state
 
 // State holds the internal state of the lexer while processing a given input.
 // Note that the public fields should only be accessed from custom StateFn
 // functions.
-//
 type State state
 
 type undo struct {
@@ -146,12 +135,10 @@ type state struct {
 //
 // If a StateFn returns nil, the lexer resets the current token starting offset
 // then transitions back to its initial state function.
-//
 type StateFn func(l *State) StateFn
 
 // NewLexer creates a new lexer associated with the given source file. A new
 // lexer must be created for every source file to be lexed.
-//
 func NewLexer(f *File, init StateFn) *Lexer {
 	s := &state{
 		// initial q size must be an exponent of 2
@@ -161,7 +148,12 @@ func NewLexer(f *File, init StateFn) *Lexer {
 		init:  init,
 		uh:    1,
 	}
-
+	if len(f.lines) != 0 {
+		err := f.Reset()
+		if err != nil {
+			panic(err)
+		}
+	}
 	// add line 1 to file
 	f.AddLine(0, 1)
 	// sentinel values
@@ -176,7 +168,6 @@ func NewLexer(f *File, init StateFn) *Lexer {
 // state functions to implement context switches (e.g. switch from accepting
 // plain text to expressions in a template-like language). This function returns
 // the previous initial state.
-//
 func (s *State) Init(initState StateFn) StateFn {
 	prev := s.init
 	s.init = initState
@@ -189,7 +180,6 @@ func (s *State) Init(initState StateFn) StateFn {
 // non-recoverable error condition), Lex() must return a token type that
 // indicates an EOF condition. A common strategy is to emit an Error token with
 // io.EOF as a value.
-//
 func (l *Lexer) Lex() (Token, int, interface{}) {
 	for l.count == 0 {
 		st := (*State)(l)
@@ -203,7 +193,6 @@ func (l *Lexer) Lex() (Token, int, interface{}) {
 }
 
 // File returns the File used as input for the lexer.
-//
 func (l *Lexer) File() *File {
 	return l.f
 }
@@ -212,14 +201,12 @@ func (l *Lexer) File() *File {
 // offset for the token (usually s.TokenPos()).
 //
 // If the emitted token is Error, the value must be an error interface.
-//
 func (s *State) Emit(offset int, t Token, value interface{}) {
 	s.push(t, offset, value)
 }
 
 // Errorf emits an error token with type Error. The Item value is set to the
 // result of calling fmt.Errorf(format, args...) and offset is the file offset.
-//
 func (s *State) Errorf(offset int, format string, args ...interface{}) {
 	s.push(Error, offset, fmt.Errorf(format, args...))
 }
@@ -232,7 +219,6 @@ func (s *State) Errorf(offset int, format string, args ...interface{}) {
 // runes, nul bytes (0x00) and BOMs (U+FEFF) and reports them as errors by
 // calling Errorf (except for a BOM at the beginning of the file which is simply
 // ignored).
-//
 func (s *State) Next() rune {
 	r, _, err := s.ReadRune()
 	if err != nil {
@@ -252,7 +238,6 @@ func (s *State) Next() rune {
 // This function is here to facilitate interfacing with standard library
 // scanners that need an io.RuneScanner. Custom lexers should use the Next
 // function instead.
-//
 func (s *State) ReadRune() (rune, int, error) {
 	// read from undo buffer
 	if u := (s.ur + 1) & undoMask; u != s.uh {
@@ -322,7 +307,6 @@ func (s *State) pushUndo(off int, r rune, sz int) {
 // of the input stream will fail silently, Pos will return -1 (an invalid
 // offset) and Current will return utf8.RuneSelf, a value impossible to get
 // by any other means.
-//
 func (s *State) Backup() {
 	if s.undo[s.ur].p == -1 {
 		return
@@ -332,7 +316,6 @@ func (s *State) Backup() {
 
 // UnreadRune reverts the last call to ReadRune. It is essentially the same as
 // Backup except for the error return value.
-//
 func (s *State) UnreadRune() error {
 	if s.undo[s.ur].p == -1 {
 		return ErrInvalidUnreadRune
@@ -342,14 +325,12 @@ func (s *State) UnreadRune() error {
 }
 
 // Current returns the last rune returned by State.Next.
-//
 func (s *State) Current() rune {
 	return s.undo[s.ur].r
 }
 
 // Pos returns the byte offset of the last rune returned by State.Next.
 // Returns -1 if no input has been read yet.
-//
 func (s *State) Pos() int {
 	return s.undo[s.ur].p
 }
@@ -381,7 +362,6 @@ func (s *State) fill() {
 // Peek returns the next rune in the input stream without consuming it. This
 // is equivalent to calling Next followed by Backup. At EOF, it simply returns
 // EOF.
-//
 func (s *State) Peek() rune {
 	if s.Current() == EOF {
 		return EOF
@@ -421,13 +401,11 @@ func (s *State) Peek() rune {
 //		s.Emit(s.TokenPos(), tokTypeIdentifier, string(tokBuf))
 //		return nil
 //	}
-//
 func (s *State) StartToken(offset int) {
 	s.ts = offset
 }
 
 // TokenPos returns the last offset set by StartToken.
-//
 func (s *State) TokenPos() int {
 	return s.ts
 }

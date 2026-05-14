@@ -27,7 +27,6 @@ import (
 )
 
 // IsValidOffset returns true if offset is a valid file offset (i.e. p >= 0).
-//
 func IsValidOffset(offset int) bool {
 	return offset >= 0
 }
@@ -40,7 +39,6 @@ var (
 )
 
 // Position describes an arbitrary source position including the file, line, and column location.
-//
 type Position struct {
 	Filename string
 	Line     int // 1-based line number
@@ -53,7 +51,6 @@ func (p Position) String() string {
 
 // A File represents an input file. It's a wrapper around an io.Reader that
 // handles file offset to line/column conversion.
-//
 type File struct {
 	name string
 	io.Reader
@@ -61,7 +58,6 @@ type File struct {
 }
 
 // NewFile returns a new File.
-//
 func NewFile(name string, r io.Reader) *File {
 	return &File{
 		name:   name,
@@ -70,9 +66,21 @@ func NewFile(name string, r io.Reader) *File {
 }
 
 // Name returns the file name.
-//
 func (f *File) Name() string {
 	return f.name
+}
+
+// Reset resets the file to the read from the start.
+func (f *File) Reset() error {
+	if rs, ok := f.Reader.(io.Seeker); ok {
+		_, err := rs.Seek(0, io.SeekStart)
+		if err != nil {
+			return err
+		}
+		f.lines = f.lines[:0]
+		return nil
+	}
+	return ErrNoSeek
 }
 
 // AddLine adds a new line at the given file offset.
@@ -82,7 +90,6 @@ func (f *File) Name() string {
 // If offset is before the offset of the last known line,
 // or if line is not equal to the last know line number plus one, AddLine will
 // panic.
-//
 func (f *File) AddLine(offset int, line int) {
 	l := len(f.lines)
 	if (l > 0 && f.lines[l-1] >= offset) || l+1 != line {
@@ -93,7 +100,6 @@ func (f *File) AddLine(offset int, line int) {
 
 // Position returns the 1-based line and column for a given file offset.
 // The returned column is a byte offset, not a rune offset.
-//
 func (f *File) Position(offset int) Position {
 	i, j := 0, len(f.lines)
 	for i < j {
@@ -108,7 +114,6 @@ func (f *File) Position(offset int) Position {
 }
 
 // LineOffset returns the file offset of the given line.
-//
 func (f *File) LineOffset(line int) int {
 	if line < 1 || line > len(f.lines) {
 		return -1
@@ -117,7 +122,6 @@ func (f *File) LineOffset(line int) int {
 }
 
 // GetLineBytes returns a string containing the line for the given file offset.
-//
 func (f *File) GetLineBytes(offset int) (l []byte, err error) {
 	lp := f.LineOffset(f.Position(offset).Line)
 	if !IsValidOffset(lp) {
